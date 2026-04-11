@@ -2,54 +2,45 @@
 
 A CLI tool for parsing and visualizing flash memory layouts from linker map files.
 
----
+## Features
 
-## Installation
+- **Map Parsing** (`mapparser`): Parse GNU ld `.map` files to extract memory region data.
+- **Flash Regions** (`flashregion`): Data model for individual flash/RAM memory regions.
+- **Flash Layout** (`flashlayout`): Manage collections of regions as a complete memory layout.
+- **Visualization** (`flashvisualizer`): Render ASCII bar charts of memory usage.
+- **Reporting** (`flashreport`): Generate detailed usage reports per region.
+- **Export** (`flashexport`): Export layouts to JSON or CSV formats.
+- **Filtering** (`flashfilter`): Filter regions by name, type, or usage threshold.
+- **Summary** (`flashsummary`): Aggregate statistics across all regions.
+- **Diff** (`flashdiff`): Compare two layouts and highlight changes.
+- **Alignment Check** (`flashalign`): Detect address and size alignment issues across regions.
+
+## Building
 
 ```bash
 make
-sudo make install
+```
+
+## Running Tests
+
+```bash
+make test
 ```
 
 ## Usage
 
-Pass a linker map file to `flashmap` to generate a visual breakdown of flash memory regions:
+```bash
+flashmap <mapfile> [--align <boundary>] [--export json|csv] [--filter <name>]
+```
+
+### Alignment Check Example
 
 ```bash
-flashmap firmware.map
+flashmap firmware.map --align 256
 ```
 
-Example output:
-
-```
-Flash Memory Layout
-===================
-[████████░░░░░░░░░░░░]  42% used  (168 KB / 512 KB)
-
-.text        0x08000000   128 KB  ████████████
-.rodata      0x08020000    32 KB  ███
-.data        0x08028000     8 KB  █
-```
-
-Optional flags:
-
-```
--o <file>    Write output to a file instead of stdout
--f <format>  Output format: text (default), json, csv
--v           Verbose mode
---help       Show help message
-```
-
-## Building from Source
-
-```bash
-git clone https://github.com/yourname/flashmap.git
-cd flashmap
-make
-```
-
-Requires a C99-compatible compiler and GNU Make.
+This will report any regions whose start address or size is not a multiple of 256 bytes.
 
 ## License
 
-MIT © 2024 — see [LICENSE](LICENSE) for details.
+MIT
