@@ -6,97 +6,90 @@
 #include "../src/flashregion.h"
 
 static FlashLayout *make_layout(void) {
-    return flashlayout_create();
+    return flash_layout_create();
 }
 
-static void add_region(FlashLayout *layout, const char *name,
-                       uint32_t start, uint32_t size) {
+static void add(FlashLayout *l, const char *name, uint32_t start, uint32_t size) {
     FlashRegion r;
+    memset(&r, 0, sizeof(r));
     strncpy(r.name, name, sizeof(r.name) - 1);
-    r.name[sizeof(r.name) - 1] = '\0';
     r.start = start;
     r.size  = size;
-    flashlayout_add_region(layout, &r);
+    flash_layout_add_region(l, &r);
 }
 
-static void test_can_merge_adjacent(void) {
-    FlashRegion a = { .start = 0x0000, .size = 0x1000 };
-    FlashRegion b = { .start = 0x1000, .size = 0x1000 };
-    assert(flashmerge_can_merge(&a, &b, MERGE_ADJACENT) == 1);
-    assert(flashmerge_can_merge(&a, &b, MERGE_OVERLAPPING) == 0);
-    assert(flashmerge_can_merge(&a, &b, MERGE_BOTH) == 1);
-    printf("PASS: test_can_merge_adjacent\n");
+static void test_merge_no_overlap(void) {
+    FlashLayout *base    = make_layout();
+    FlashLayout *overlay = make_layout();
+    add(base,    "boot",  0x0000, 0x1000);
+    add(overlay, "app",   0x2000, 0x2000);
+
+    FlashMergeResult res = flash_merge_layouts(base, overlay, FLASH_MERGE_STRATEGY_BASE_WINS);
+    assert(res.error == FLASH_MERGE_ERR_NONE);
+    assert(res.merged != NULL);
+    assert(res.merged->region_count == 2);
+    assert(res.conflict_count == 0);
+
+    flash_merge_result_free(&res);
+    flash_layout_free(base);
+    flash_layout_free(overlay);
+    printf("PASS test_merge_no_overlap\n");
 }
 
-static void test_can_merge_overlapping(void) {
-    FlashRegion a = { .start = 0x0000, .size = 0x2000 };
-    FlashRegion b = { .start = 0x1000, .size = 0x2000 };
-    assert(flashmerge_can_merge(&a, &b, MERGE_OVERLAPPING) == 1);
-    assert(flashmerge_can_merge(&a, &b, MERGE_ADJACENT)   == 0);
-    assert(flashmerge_can_merge(&a, &b, MERGE_BOTH)       == 1);
-    printf("PASS: test_can_merge_overlapping\n");
+static void test_merge_base_wins(void) {
+    FlashLayout *base    = make_layout();
+    FlashLayout *overlay = make_layout();
+    add(base,    "boot",  0x0000, 0x2000);
+    add(overlay, "patch", 0x1000, 0x1000);
+
+    FlashMergeResult res = flash_merge_layouts(base, overlay, FLASH_MERGE_STRATEGY_BASE_WINS);
+    assert(res.error == FLASH_MERGE_ERR_NONE);
+    assert(res.conflict_count == 1);
+    /* overlay region skipped, only base survives */
+    assert(res.merged->region_count == 1);
+
+    flash_merge_result_free(&res);
+    flash_layout_free(base);
+    flash_layout_free(overlay);
+    printf("PASS test_merge_base_wins\n");
 }
 
-static void test_cannot_merge_gap(void) {
-    FlashRegion a = { .start = 0x0000, .size = 0x1000 };
-    FlashRegion b = { .start = 0x2000, .size = 0x1000 };
-    assert(flashmerge_can_merge(&a, &b, MERGE_ADJACENT)   == 0);
-    assert(flashmerge_can_merge(&a, &b, MERGE_OVERLAPPING) == 0);
-    assert(flashmerge_can_merge(&a, &b, MERGE_BOTH)        == 0);
-    printf("PASS: test_cannot_merge_gap\n");
+static void test_merge_overlay_wins(void) {
+    FlashLayout *base    = make_layout();
+    FlashLayout *overlay = make_layout();
+    add(base,    "boot",  0x0000, 0x2000);
+    add(overlay, "patch", 0x1000, 0x0800);
+
+    FlashMergeResult res = flash_merge_layouts(base, overlay, FLASH_MERGE_STRATEGY_OVERLAY_WINS);
+    assert(res.error == FLASH_MERGE_ERR_NONE);
+    assert(res.conflict_count == 1);
+    assert(res.merged->region_count == 2);
+
+    flash_merge_result_free(&res);
+    flash_layout_free(base);
+    flash_layout_free(overlay);
+    printf("PASS test_merge_overlay_wins\n");
 }
 
-static void test_combine_regions(void) {
-    FlashRegion a = { .start = 0x0000, .size = 0x1000 };
-    FlashRegion b = { .start = 0x1000, .size = 0x2000 };
-    strncpy(a.name, "regionA", sizeof(a.name) - 1);
-    strncpy(b.name, "regionB", sizeof(b.name) - 1);
-    FlashRegion out;
-    flashmerge_combine(&a, &b, &out);
-    assert(out.start == 0x0000);
-    assert(out.size  == 0x3000);
-    assert(strcmp(out.name, "regionA") == 0);
-    printf("PASS: test_combine_regions\n");
+static void test_merge_null_input(void) {
+    FlashMergeResult res = flash_merge_layouts(NULL, NULL, FLASH_MERGE_STRATEGY_BASE_WINS);
+    assert(res.error == FLASH_MERGE_ERR_NULL_INPUT);
+    assert(res.merged == NULL);
+    printf("PASS test_merge_null_input\n");
 }
 
-static void test_merge_apply_adjacent(void) {
-    FlashLayout *layout = make_layout();
-    add_region(layout, "boot",   0x0000, 0x1000);
-    add_region(layout, "app",    0x1000, 0x2000);
-    add_region(layout, "config", 0x5000, 0x1000); /* gap before this */
-
-    MergeResult result = flashmerge_apply(layout, MERGE_ADJACENT);
-    assert(result.layout != NULL);
-    assert(result.merged_count == 1);
-    assert(flashlayout_region_count(result.layout) == 2);
-
-    flashlayout_destroy(result.layout);
-    flashlayout_destroy(layout);
-    printf("PASS: test_merge_apply_adjacent\n");
-}
-
-static void test_merge_apply_no_merge(void) {
-    FlashLayout *layout = make_layout();
-    add_region(layout, "a", 0x0000, 0x1000);
-    add_region(layout, "b", 0x3000, 0x1000);
-
-    MergeResult result = flashmerge_apply(layout, MERGE_BOTH);
-    assert(result.layout != NULL);
-    assert(result.merged_count == 0);
-    assert(flashlayout_region_count(result.layout) == 2);
-
-    flashlayout_destroy(result.layout);
-    flashlayout_destroy(layout);
-    printf("PASS: test_merge_apply_no_merge\n");
+static void test_error_string(void) {
+    assert(strcmp(flash_merge_error_str(FLASH_MERGE_ERR_NONE), "none") == 0);
+    assert(strcmp(flash_merge_error_str(FLASH_MERGE_ERR_ALLOC), "allocation failure") == 0);
+    printf("PASS test_error_string\n");
 }
 
 int main(void) {
-    test_can_merge_adjacent();
-    test_can_merge_overlapping();
-    test_cannot_merge_gap();
-    test_combine_regions();
-    test_merge_apply_adjacent();
-    test_merge_apply_no_merge();
+    test_merge_no_overlap();
+    test_merge_base_wins();
+    test_merge_overlay_wins();
+    test_merge_null_input();
+    test_error_string();
     printf("All flashmerge tests passed.\n");
     return 0;
 }
