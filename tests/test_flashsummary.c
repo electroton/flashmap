@@ -1,95 +1,104 @@
-#include <assert.h>
 #include <stdio.h>
+#include <assert.h>
 #include <string.h>
-
 #include "../src/flashsummary.h"
 #include "../src/flashlayout.h"
 #include "../src/flashregion.h"
 
-/* Helper: build a small layout with known regions */
-static FlashLayout build_test_layout(void) {
+static FlashLayout make_test_layout(void) {
     FlashLayout layout;
-    memset(&layout, 0, sizeof(layout));
+    flashlayout_init(&layout);
 
-    /* Region 0: 50% used */
-    strncpy(layout.regions[0].name, "FLASH", REGION_NAME_MAX);
-    layout.regions[0].start   = 0x08000000;
-    layout.regions[0].size    = 512 * 1024;
-    layout.regions[0].used    = 256 * 1024;
+    FlashRegion r1;
+    strncpy(r1.name, "FLASH", FLASH_REGION_NAME_MAX);
+    r1.start = 0x08000000;
+    r1.size  = 512 * 1024;
+    r1.used  = 300 * 1024;
 
-    /* Region 1: 95% used (critical) */
-    strncpy(layout.regions[1].name, "EEPROM", REGION_NAME_MAX);
-    layout.regions[1].start   = 0x08080000;
-    layout.regions[1].size    = 64 * 1024;
-    layout.regions[1].used    = (size_t)(64 * 1024 * 0.95);
+    FlashRegion r2;
+    strncpy(r2.name, "RAM", FLASH_REGION_NAME_MAX);
+    r2.start = 0x20000000;
+    r2.size  = 128 * 1024;
+    r2.used  = 64 * 1024;
 
-    /* Region 2: 100% full */
-    strncpy(layout.regions[2].name, "BOOTLOADER", REGION_NAME_MAX);
-    layout.regions[2].start   = 0x08100000;
-    layout.regions[2].size    = 32 * 1024;
-    layout.regions[2].used    = 32 * 1024;
-
-    layout.region_count = 3;
+    flashlayout_add_region(&layout, &r1);
+    flashlayout_add_region(&layout, &r2);
     return layout;
 }
 
-static void test_compute_null_inputs(void) {
-    FlashSummary summary;
-    FlashLayout  layout;
-    assert(flash_summary_compute(NULL, &summary) == -1);
-    assert(flash_summary_compute(&layout, NULL)  == -1);
-    printf("PASS: test_compute_null_inputs\n");
+static void test_init(void) {
+    FlashSummary s;
+    flashsummary_init(&s);
+    assert(s.total_regions == 0);
+    assert(s.total_size == 0);
+    assert(s.used_size == 0);
+    assert(s.free_size == 0);
+    assert(s.utilization_percent == 0.0f);
+    printf("[PASS] test_init\n");
 }
 
 static void test_compute_totals(void) {
-    FlashLayout  layout  = build_test_layout();
-    FlashSummary summary;
+    FlashLayout layout = make_test_layout();
+    FlashSummary s;
+    flashsummary_init(&s);
+    flashsummary_compute(&s, &layout);
 
-    assert(flash_summary_compute(&layout, &summary) == 0);
-    assert(summary.region_count   == 3);
-    assert(summary.total_capacity == 512*1024 + 64*1024 + 32*1024);
-    assert(summary.total_used     == 256*1024 + (size_t)(64*1024*0.95) + 32*1024);
-    assert(summary.total_free     == summary.total_capacity - summary.total_used);
-    printf("PASS: test_compute_totals\n");
+    assert(s.total_regions == 2);
+    assert(s.total_size == (512 + 128) * 1024);
+    assert(s.used_size  == (300 + 64)  * 1024);
+    assert(s.free_size  == (212 + 64)  * 1024);
+    printf("[PASS] test_compute_totals\n");
 }
 
-static void test_compute_critical_and_full(void) {
-    FlashLayout  layout  = build_test_layout();
-    FlashSummary summary;
+static void test_compute_utilization(void) {
+    FlashLayout layout = make_test_layout();
+    FlashSummary s;
+    flashsummary_init(&s);
+    flashsummary_compute(&s, &layout);
 
-    assert(flash_summary_compute(&layout, &summary) == 0);
-    assert(summary.full_regions     == 1); /* BOOTLOADER */
-    assert(summary.critical_regions == 2); /* EEPROM + BOOTLOADER */
-    printf("PASS: test_compute_critical_and_full\n");
+    float expected = (float)(364 * 1024) / (float)(640 * 1024) * 100.0f;
+    assert(s.utilization_percent > expected - 0.1f);
+    assert(s.utilization_percent < expected + 0.1f);
+    printf("[PASS] test_compute_utilization\n");
 }
 
-static void test_compute_most_least_used(void) {
-    FlashLayout  layout  = build_test_layout();
-    FlashSummary summary;
+static void test_compute_region_bounds(void) {
+    FlashLayout layout = make_test_layout();
+    FlashSummary s;
+    flashsummary_init(&s);
+    flashsummary_compute(&s, &layout);
 
-    assert(flash_summary_compute(&layout, &summary) == 0);
-    assert(summary.most_used_region  != NULL);
-    assert(summary.least_used_region != NULL);
-    assert(strcmp(summary.most_used_region->name,  "BOOTLOADER") == 0);
-    assert(strcmp(summary.least_used_region->name, "FLASH")      == 0);
-    printf("PASS: test_compute_most_least_used\n");
+    assert(s.smallest_region == 128 * 1024);
+    assert(s.largest_region  == 512 * 1024);
+    printf("[PASS] test_compute_region_bounds\n");
 }
 
-static void test_usage_percent_range(void) {
-    FlashLayout  layout  = build_test_layout();
-    FlashSummary summary;
+static void test_compute_largest_free_block(void) {
+    FlashLayout layout = make_test_layout();
+    FlashSummary s;
+    flashsummary_init(&s);
+    flashsummary_compute(&s, &layout);
 
-    assert(flash_summary_compute(&layout, &summary) == 0);
-    assert(summary.usage_percent >= 0.0 && summary.usage_percent <= 100.0);
-    printf("PASS: test_usage_percent_range\n");
+    /* FLASH free = 212K, RAM free = 64K => largest free = 212K */
+    assert(s.largest_free_block == 212 * 1024);
+    printf("[PASS] test_compute_largest_free_block\n");
+}
+
+static void test_null_safety(void) {
+    flashsummary_init(NULL);
+    flashsummary_compute(NULL, NULL);
+    flashsummary_print(NULL);
+    printf("[PASS] test_null_safety\n");
 }
 
 int main(void) {
-    test_compute_null_inputs();
+    printf("Running flashsummary tests...\n");
+    test_init();
     test_compute_totals();
-    test_compute_critical_and_full();
-    test_compute_most_least_used();
-    test_usage_percent_range();
+    test_compute_utilization();
+    test_compute_region_bounds();
+    test_compute_largest_free_block();
+    test_null_safety();
     printf("All flashsummary tests passed.\n");
     return 0;
 }
