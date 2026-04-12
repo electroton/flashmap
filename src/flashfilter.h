@@ -32,7 +32,19 @@ FlashLayout *flashfilter_apply(const FlashLayout *layout,
 
 /**
  * Initialise a FlashFilter with permissive defaults (matches everything).
+ * After this call all flags are cleared, name_pattern is NULL, size bounds
+ * are 0 and UINT32_MAX respectively, and usage bounds span 0.0–100.0.
  */
 void flashfilter_init(FlashFilter *filter);
+
+/**
+ * Return non-zero if the given region matches all active criteria in filter.
+ * This is the per-region predicate used internally by flashfilter_apply() but
+ * is exposed here to allow callers to test individual regions without
+ * constructing a full layout.
+ *
+ * Both region and filter must be non-NULL.
+ */
+int flashfilter_matches(const FlashRegion *region, const FlashFilter *filter);
 
 #endif /* FLASHFILTER_H */
