@@ -1,3 +1,4 @@
+```c
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -87,6 +88,22 @@ static void test_busiest_region_empty(void)
     printf("PASS: test_busiest_region_empty\n");
 }
 
+/* Verify that a layout consisting solely of gap regions reports 0% utilization */
+static void test_compute_all_gaps(void)
+{
+    FlashRegion regions[2] = {
+        { .name = "gap0", .start = 0x0000, .size = 0x2000, .capacity = 0x2000, .is_gap = 1 },
+        { .name = "gap1", .start = 0x2000, .size = 0x2000, .capacity = 0x2000, .is_gap = 1 },
+    };
+    FlashLayout layout = make_layout(regions, 2);
+    FlashStats stats;
+    assert(flashstats_compute(&layout, &stats) == 0);
+    assert(stats.used_size == 0);
+    assert(stats.free_size == 0x4000);
+    assert(stats.utilization_pct > -0.1 && stats.utilization_pct < 0.1);
+    printf("PASS: test_compute_all_gaps\n");
+}
+
 int main(void)
 {
     test_compute_null();
@@ -94,6 +111,7 @@ int main(void)
     test_utilization_bar();
     test_busiest_region();
     test_busiest_region_empty();
-    printf("All flashstats tests passed.\n");
+    test_compute_all_gaps();
     return 0;
 }
+```
