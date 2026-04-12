@@ -1,63 +1,57 @@
-/**
+/*
  * flashboundary.h - Flash region boundary checking and enforcement
- *
- * Provides utilities for validating that regions stay within defined
- * flash memory boundaries and detecting boundary violations.
  */
 
 #ifndef FLASHBOUNDARY_H
 #define FLASHBOUNDARY_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include "flashregion.h"
 
-#define FLASHBOUNDARY_MAX_BOUNDS 16
-
+/* Result codes for boundary checks */
 typedef enum {
-    BOUNDARY_OK             = 0,
-    BOUNDARY_OVERFLOW       = 1,  /* Region exceeds upper bound */
-    BOUNDARY_UNDERFLOW      = 2,  /* Region starts below lower bound */
-    BOUNDARY_MISALIGNED     = 3,  /* Region not aligned to boundary granularity */
-    BOUNDARY_ZERO_SIZE      = 4   /* Region has zero size */
-} BoundaryStatus;
+    FLASH_BOUNDARY_OK           = 0,
+    FLASH_BOUNDARY_OVERFLOW     = 1,  /* access extends past region end */
+    FLASH_BOUNDARY_UNDERFLOW    = 2,  /* access starts before region start */
+    FLASH_BOUNDARY_ZERO_SIZE    = 3,  /* zero-length access */
+    FLASH_BOUNDARY_INVALID_ARG  = 4
+} FlashBoundaryResult;
 
+/* Describes an overlap between two regions */
 typedef struct {
-    uint32_t base;        /* Lower bound address */
-    uint32_t limit;       /* Upper bound address (exclusive) */
-    uint32_t granularity; /* Alignment granularity (0 = no check) */
-    char     name[32];    /* Boundary zone name */
-} FlashBoundary;
+    size_t   region_a_index;
+    size_t   region_b_index;
+    uint32_t overlap_start;
+    uint32_t overlap_end;   /* exclusive */
+} FlashBoundaryViolation;
 
-typedef struct {
-    FlashBoundary bounds[FLASHBOUNDARY_MAX_BOUNDS];
-    size_t        count;
-} FlashBoundarySet;
+/*
+ * Check whether an access of `size` bytes starting at `address`
+ * falls entirely within `region`.
+ */
+FlashBoundaryResult flash_boundary_check(const FlashRegion *region,
+                                          uint32_t address,
+                                          uint32_t size);
 
-typedef struct {
-    const FlashRegion *region;
-    BoundaryStatus     status;
-    uint32_t           violation_addr;
-} BoundaryViolation;
+/* Returns true if `address` falls inside `region`. */
+bool flash_boundary_contains(const FlashRegion *region, uint32_t address);
 
-/* Initialize a boundary set */
-void flashboundary_init(FlashBoundarySet *set);
+/* Returns true if regions a and b overlap in address space. */
+bool flash_boundary_overlaps(const FlashRegion *a, const FlashRegion *b);
 
-/* Add a boundary zone to the set */
-int flashboundary_add(FlashBoundarySet *set, uint32_t base, uint32_t limit,
-                      uint32_t granularity, const char *name);
+/*
+ * Scan an array of regions for pairwise overlaps.
+ * Caller must free the returned array with flash_boundary_free_violations().
+ * Returns NULL if no violations found (out_count == 0).
+ */
+FlashBoundaryViolation *flash_boundary_find_violations(
+        const FlashRegion *regions, size_t count, size_t *out_count);
 
-/* Check a single region against all boundaries in the set */
-BoundaryStatus flashboundary_check(const FlashBoundarySet *set,
-                                   const FlashRegion *region,
-                                   BoundaryViolation *violation_out);
+void flash_boundary_free_violations(FlashBoundaryViolation *violations);
 
-/* Check all regions in an array; returns number of violations found */
-int flashboundary_check_all(const FlashBoundarySet *set,
-                            const FlashRegion *regions, size_t count,
-                            BoundaryViolation *violations_out, size_t max_violations);
-
-/* Return a human-readable string for a BoundaryStatus */
-const char *flashboundary_status_str(BoundaryStatus status);
+/* Human-readable string for a result code. */
+const char *flash_boundary_result_str(FlashBoundaryResult result);
 
 #endif /* FLASHBOUNDARY_H */
