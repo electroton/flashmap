@@ -29,6 +29,7 @@ void flashtag_init(FlashTagSet *ts);
 
 /**
  * Add a tag to the set. Returns 1 on success, 0 if full or duplicate.
+ * Tags longer than FLASH_TAG_MAX_LEN-1 characters will be truncated.
  */
 int flashtag_add(FlashTagSet *ts, const char *tag);
 
@@ -46,6 +47,13 @@ int flashtag_has(const FlashTagSet *ts, const char *tag);
  * Check if two tag sets share at least one common tag.
  */
 int flashtag_intersects(const FlashTagSet *a, const FlashTagSet *b);
+
+/**
+ * Copy all tags from src into dst. Tags that already exist in dst or
+ * would exceed dst's capacity are skipped. Returns the number of tags
+ * successfully copied.
+ */
+int flashtag_copy(FlashTagSet *dst, const FlashTagSet *src);
 
 /**
  * Print all tags in the set to stdout (comma-separated).
