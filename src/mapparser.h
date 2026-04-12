@@ -1,4 +1,4 @@
-#ifndef MAPPARSER_H
+ifndef MAPPARSER_H
 #define MAPPARSER_H
 
 #include <stdint.h>
@@ -27,6 +27,15 @@ typedef struct {
  * @return      0 on success, -1 on error.
  */
 int flashmap_parse(const char *path, FlashMap *map);
+
+/**
+ * Look up a section by name in a FlashMap.
+ *
+ * @param map   Pointer to a populated FlashMap.
+ * @param name  Name of the section to find.
+ * @return      Pointer to the matching FlashSection, or NULL if not found.
+ */
+const FlashSection *flashmap_find_section(const FlashMap *map, const char *name);
 
 /**
  * Free any resources associated with a FlashMap.
