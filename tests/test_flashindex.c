@@ -1,92 +1,107 @@
+/*
+ * tests/test_flashindex.c
+ * Unit tests for flashindex and flashindex_report modules.
+ */
+
 #include <stdio.h>
-#include <assert.h>
 #include <string.h>
+#include <assert.h>
 #include "../src/flashindex.h"
+#include "../src/flashindex_report.h"
 
-static void test_create_destroy(void) {
-    FlashIndex *idx = flash_index_create();
-    assert(idx != NULL);
-    assert(flash_index_count(idx) == 0);
-    flash_index_destroy(idx);
-    printf("[PASS] test_create_destroy\n");
+static void test_flashindex_init(void) {
+    FlashIndex idx;
+    flashindex_init(&idx);
+    assert(idx.count == 0);
+    printf("[PASS] test_flashindex_init\n");
 }
 
-static void test_insert_and_count(void) {
-    FlashIndex *idx = flash_index_create();
-    assert(flash_index_insert(idx, "bootloader", 0x08000000, 0x4000) == 0);
-    assert(flash_index_insert(idx, "application", 0x08004000, 0x1C000) == 0);
-    assert(flash_index_count(idx) == 2);
-    flash_index_destroy(idx);
-    printf("[PASS] test_insert_and_count\n");
-}
+static void test_flashindex_add_and_find(void) {
+    FlashIndex idx;
+    flashindex_init(&idx);
 
-static void test_find_by_name_found(void) {
-    FlashIndex *idx = flash_index_create();
-    flash_index_insert(idx, "config", 0x08020000, 0x1000);
-    const FlashIndexEntry *e = flash_index_find_by_name(idx, "config");
+    int r = flashindex_add(&idx, "bootloader", 0x08000000, 0x8000);
+    assert(r == 0);
+    assert(idx.count == 1);
+
+    r = flashindex_add(&idx, "application", 0x08008000, 0x30000);
+    assert(r == 0);
+    assert(idx.count == 2);
+
+    const FlashIndexEntry *e = flashindex_find(&idx, "bootloader");
     assert(e != NULL);
-    assert(e->address == 0x08020000);
-    assert(e->size == 0x1000);
-    flash_index_destroy(idx);
-    printf("[PASS] test_find_by_name_found\n");
-}
+    assert(e->start == 0x08000000);
+    assert(e->size  == 0x8000);
 
-static void test_find_by_name_not_found(void) {
-    FlashIndex *idx = flash_index_create();
-    flash_index_insert(idx, "region_a", 0x08000000, 0x2000);
-    const FlashIndexEntry *e = flash_index_find_by_name(idx, "region_b");
-    assert(e == NULL);
-    flash_index_destroy(idx);
-    printf("[PASS] test_find_by_name_not_found\n");
-}
-
-static void test_find_by_address_in_range(void) {
-    FlashIndex *idx = flash_index_create();
-    flash_index_insert(idx, "firmware", 0x08008000, 0x8000);
-    const FlashIndexEntry *e = flash_index_find_by_address(idx, 0x08009000);
+    e = flashindex_find(&idx, "application");
     assert(e != NULL);
-    assert(strcmp(e->name, "firmware") == 0);
-    flash_index_destroy(idx);
-    printf("[PASS] test_find_by_address_in_range\n");
-}
+    assert(e->start == 0x08008000);
 
-static void test_find_by_address_out_of_range(void) {
-    FlashIndex *idx = flash_index_create();
-    flash_index_insert(idx, "firmware", 0x08008000, 0x8000);
-    const FlashIndexEntry *e = flash_index_find_by_address(idx, 0x08000000);
+    e = flashindex_find(&idx, "nonexistent");
     assert(e == NULL);
-    flash_index_destroy(idx);
-    printf("[PASS] test_find_by_address_out_of_range\n");
+
+    printf("[PASS] test_flashindex_add_and_find\n");
 }
 
-static void test_clear(void) {
-    FlashIndex *idx = flash_index_create();
-    flash_index_insert(idx, "a", 0x1000, 0x100);
-    flash_index_insert(idx, "b", 0x2000, 0x200);
-    flash_index_clear(idx);
-    assert(flash_index_count(idx) == 0);
-    assert(flash_index_find_by_name(idx, "a") == NULL);
-    flash_index_destroy(idx);
-    printf("[PASS] test_clear\n");
+static void test_flashindex_add_duplicate(void) {
+    FlashIndex idx;
+    flashindex_init(&idx);
+
+    flashindex_add(&idx, "region", 0x1000, 0x400);
+    int r = flashindex_add(&idx, "region", 0x2000, 0x400);
+    /* Duplicate names should be rejected */
+    assert(r != 0);
+    assert(idx.count == 1);
+
+    printf("[PASS] test_flashindex_add_duplicate\n");
 }
 
-static void test_null_safety(void) {
-    assert(flash_index_find_by_name(NULL, "x") == NULL);
-    assert(flash_index_find_by_address(NULL, 0x0) == NULL);
-    assert(flash_index_count(NULL) == 0);
-    flash_index_destroy(NULL);
-    printf("[PASS] test_null_safety\n");
+static void test_flashindex_remove(void) {
+    FlashIndex idx;
+    flashindex_init(&idx);
+
+    flashindex_add(&idx, "alpha", 0x0000, 0x100);
+    flashindex_add(&idx, "beta",  0x0200, 0x100);
+    assert(idx.count == 2);
+
+    int r = flashindex_remove(&idx, "alpha");
+    assert(r == 0);
+    assert(idx.count == 1);
+    assert(flashindex_find(&idx, "alpha") == NULL);
+    assert(flashindex_find(&idx, "beta")  != NULL);
+
+    r = flashindex_remove(&idx, "missing");
+    assert(r != 0);
+
+    printf("[PASS] test_flashindex_remove\n");
+}
+
+static void test_flashindex_report(void) {
+    FlashIndex idx;
+    flashindex_init(&idx);
+
+    flashindex_add(&idx, "bootloader",  0x08000000, 0x8000);
+    flashindex_add(&idx, "application", 0x08008000, 0x30000);
+    flashindex_add(&idx, "config",      0x08038000, 0x1000);
+
+    /* Should not crash with valid inputs */
+    flashindex_report_print(&idx, stdout);
+    flashindex_report_summary(&idx, stdout);
+
+    /* Should not crash with NULL inputs */
+    flashindex_report_print(NULL, stdout);
+    flashindex_report_summary(NULL, stdout);
+
+    printf("[PASS] test_flashindex_report\n");
 }
 
 int main(void) {
-    test_create_destroy();
-    test_insert_and_count();
-    test_find_by_name_found();
-    test_find_by_name_not_found();
-    test_find_by_address_in_range();
-    test_find_by_address_out_of_range();
-    test_clear();
-    test_null_safety();
-    printf("All flashindex tests passed.\n");
+    test_flashindex_init();
+    test_flashindex_add_and_find();
+    test_flashindex_add_duplicate();
+    test_flashindex_remove();
+    test_flashindex_report();
+
+    printf("\nAll flashindex tests passed.\n");
     return 0;
 }
