@@ -6,97 +6,103 @@
 static int tests_run = 0;
 static int tests_passed = 0;
 
-#define RUN_TEST(fn) do { tests_run++; fn(); tests_passed++; } while (0)
+#define RUN_TEST(fn) do { tests_run++; fn(); tests_passed++; } while(0)
 
-static void test_init_empty(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    assert(ts.count == 0);
+static void test_init_zeroes_registry(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    assert(reg.count == 0);
 }
 
-static void test_add_and_has(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    assert(flashtag_add(&ts, "bootloader") == 1);
-    assert(ts.count == 1);
-    assert(flashtag_has(&ts, "bootloader") == 1);
-    assert(flashtag_has(&ts, "application") == 0);
+static void test_add_single_tag(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    int ret = flashtag_add(&reg, "FLASH", "bootable");
+    assert(ret == FLASHTAG_OK);
+    assert(reg.count == 1);
+    assert(strcmp(reg.tags[0].region_name, "FLASH") == 0);
+    assert(strcmp(reg.tags[0].tag, "bootable") == 0);
 }
 
-static void test_add_duplicate(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    assert(flashtag_add(&ts, "critical") == 1);
-    assert(flashtag_add(&ts, "critical") == 0);
-    assert(ts.count == 1);
+static void test_add_duplicate_returns_error(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    flashtag_add(&reg, "FLASH", "bootable");
+    int ret = flashtag_add(&reg, "FLASH", "bootable");
+    assert(ret == FLASHTAG_ERR_DUPLICATE);
+    assert(reg.count == 1);
 }
 
-static void test_remove_existing(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    flashtag_add(&ts, "nvs");
-    flashtag_add(&ts, "ota");
-    assert(flashtag_remove(&ts, "nvs") == 1);
-    assert(ts.count == 1);
-    assert(flashtag_has(&ts, "nvs") == 0);
-    assert(flashtag_has(&ts, "ota") == 1);
+static void test_add_multiple_tags_same_region(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    assert(flashtag_add(&reg, "FLASH", "bootable") == FLASHTAG_OK);
+    assert(flashtag_add(&reg, "FLASH", "read-only") == FLASHTAG_OK);
+    assert(reg.count == 2);
 }
 
-static void test_remove_nonexistent(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    flashtag_add(&ts, "factory");
-    assert(flashtag_remove(&ts, "missing") == 0);
-    assert(ts.count == 1);
+static void test_has_tag_returns_true(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    flashtag_add(&reg, "RAM", "volatile");
+    assert(flashtag_has_tag(&reg, "RAM", "volatile") == 1);
 }
 
-static void test_intersects(void) {
-    FlashTagSet a, b;
-    flashtag_init(&a);
-    flashtag_init(&b);
-    flashtag_add(&a, "read-only");
-    flashtag_add(&a, "secure");
-    flashtag_add(&b, "secure");
-    flashtag_add(&b, "encrypted");
-    assert(flashtag_intersects(&a, &b) == 1);
-
-    FlashTagSet c;
-    flashtag_init(&c);
-    flashtag_add(&c, "scratch");
-    assert(flashtag_intersects(&a, &c) == 0);
+static void test_has_tag_returns_false_for_missing(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    flashtag_add(&reg, "RAM", "volatile");
+    assert(flashtag_has_tag(&reg, "RAM", "persistent") == 0);
+    assert(flashtag_has_tag(&reg, "FLASH", "volatile") == 0);
 }
 
-static void test_clear(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    flashtag_add(&ts, "tag1");
-    flashtag_add(&ts, "tag2");
-    flashtag_clear(&ts);
-    assert(ts.count == 0);
-    assert(flashtag_has(&ts, "tag1") == 0);
+static void test_remove_existing_tag(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    flashtag_add(&reg, "FLASH", "bootable");
+    int ret = flashtag_remove(&reg, "FLASH", "bootable");
+    assert(ret == FLASHTAG_OK);
+    assert(reg.count == 0);
+    assert(flashtag_has_tag(&reg, "FLASH", "bootable") == 0);
 }
 
-static void test_max_capacity(void) {
-    FlashTagSet ts;
-    flashtag_init(&ts);
-    char tag[FLASH_TAG_MAX_LEN];
-    for (int i = 0; i < FLASH_TAG_MAX_COUNT; i++) {
-        snprintf(tag, sizeof(tag), "tag%d", i);
-        assert(flashtag_add(&ts, tag) == 1);
-    }
-    assert(ts.count == FLASH_TAG_MAX_COUNT);
-    assert(flashtag_add(&ts, "overflow") == 0);
+static void test_remove_nonexistent_tag(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    int ret = flashtag_remove(&reg, "FLASH", "bootable");
+    assert(ret == FLASHTAG_ERR_NOT_FOUND);
+}
+
+static void test_get_tags_for_region(void) {
+    FlashTagRegistry reg;
+    flashtag_init(&reg);
+    flashtag_add(&reg, "FLASH", "bootable");
+    flashtag_add(&reg, "FLASH", "read-only");
+    flashtag_add(&reg, "RAM", "volatile");
+
+    char out[8][FLASHTAG_TAG_LEN];
+    int count = flashtag_get_tags_for_region(&reg, "FLASH", out, 8);
+    assert(count == 2);
+}
+
+static void test_null_inputs_handled(void) {
+    assert(flashtag_add(NULL, "FLASH", "tag") == FLASHTAG_ERR_NULL);
+    assert(flashtag_has_tag(NULL, "FLASH", "tag") == 0);
+    assert(flashtag_remove(NULL, "FLASH", "tag") == FLASHTAG_ERR_NULL);
+    assert(flashtag_get_tags_for_region(NULL, "FLASH", NULL, 0) == 0);
 }
 
 int main(void) {
-    RUN_TEST(test_init_empty);
-    RUN_TEST(test_add_and_has);
-    RUN_TEST(test_add_duplicate);
-    RUN_TEST(test_remove_existing);
-    RUN_TEST(test_remove_nonexistent);
-    RUN_TEST(test_intersects);
-    RUN_TEST(test_clear);
-    RUN_TEST(test_max_capacity);
-    printf("flashtag: %d/%d tests passed\n", tests_passed, tests_run);
+    RUN_TEST(test_init_zeroes_registry);
+    RUN_TEST(test_add_single_tag);
+    RUN_TEST(test_add_duplicate_returns_error);
+    RUN_TEST(test_add_multiple_tags_same_region);
+    RUN_TEST(test_has_tag_returns_true);
+    RUN_TEST(test_has_tag_returns_false_for_missing);
+    RUN_TEST(test_remove_existing_tag);
+    RUN_TEST(test_remove_nonexistent_tag);
+    RUN_TEST(test_get_tags_for_region);
+    RUN_TEST(test_null_inputs_handled);
+    printf("flashtag tests: %d/%d passed\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;
 }
