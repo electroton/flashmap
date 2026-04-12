@@ -1,148 +1,110 @@
-#include <stdio.h>
-#include <string.h>
-#include <assert.h>
+/*
+ * test_flashwatch.c - Unit tests for flashwatch module
+ */
 
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
 #include "../src/flashwatch.h"
 #include "../src/flashlayout.h"
 #include "../src/flashregion.h"
 
-/* Helper: build a simple layout with up to 4 regions */
-static FlashLayout make_layout(const char *names[], uint32_t addrs[],
-                               uint32_t sizes[], int count) {
-    FlashLayout l;
-    memset(&l, 0, sizeof(l));
-    for (int i = 0; i < count; i++) {
-        FlashRegion r;
-        memset(&r, 0, sizeof(r));
-        strncpy(r.name, names[i], sizeof(r.name) - 1);
-        r.address = addrs[i];
-        r.size    = sizes[i];
-        flashlayout_add(&l, &r);
-    }
+static FlashLayout *make_layout(void) {
+    FlashLayout *l = calloc(1, sizeof(FlashLayout));
+    l->capacity = 4;
+    l->regions = calloc(l->capacity, sizeof(FlashRegion));
     return l;
 }
 
-static void test_no_changes(void) {
-    const char *names[] = {"boot", "app"};
-    uint32_t    addrs[] = {0x0000, 0x1000};
-    uint32_t    sizes[] = {0x1000, 0x8000};
-
-    FlashLayout old = make_layout(names, addrs, sizes, 2);
-    FlashLayout new = make_layout(names, addrs, sizes, 2);
-    FlashWatchResult result;
-
-    int rc = flashwatch_compare(&old, &new, &result);
-    assert(rc == 0);
-    assert(result.count == 0);
-
-    flashwatch_free(&result);
-    flashlayout_free(&old);
-    flashlayout_free(&new);
-    printf("PASS: test_no_changes\n");
+static void add_region(FlashLayout *l, const char *name, uint32_t base, uint32_t size) {
+    FlashRegion *r = &l->regions[l->count++];
+    strncpy(r->name, name, sizeof(r->name) - 1);
+    r->base = base;
+    r->size = size;
 }
 
-static void test_region_added(void) {
-    const char *old_names[] = {"boot"};
-    uint32_t    old_addrs[] = {0x0000};
-    uint32_t    old_sizes[] = {0x1000};
-
-    const char *new_names[] = {"boot", "app"};
-    uint32_t    new_addrs[] = {0x0000, 0x1000};
-    uint32_t    new_sizes[] = {0x1000, 0x8000};
-
-    FlashLayout old = make_layout(old_names, old_addrs, old_sizes, 1);
-    FlashLayout new = make_layout(new_names, new_addrs, new_sizes, 2);
-    FlashWatchResult result;
-
-    int rc = flashwatch_compare(&old, &new, &result);
-    assert(rc == 0);
-    assert(result.count == 1);
-    assert(result.events[0].type == WATCH_ADDED);
-    assert(strcmp(result.events[0].name, "app") == 0);
-
-    flashwatch_free(&result);
-    flashlayout_free(&old);
-    flashlayout_free(&new);
-    printf("PASS: test_region_added\n");
+static void free_layout(FlashLayout *l) {
+    free(l->regions);
+    free(l);
 }
 
-static void test_region_removed(void) {
-    const char *old_names[] = {"boot", "app"};
-    uint32_t    old_addrs[] = {0x0000, 0x1000};
-    uint32_t    old_sizes[] = {0x1000, 0x8000};
-
-    const char *new_names[] = {"boot"};
-    uint32_t    new_addrs[] = {0x0000};
-    uint32_t    new_sizes[] = {0x1000};
-
-    FlashLayout old = make_layout(old_names, old_addrs, old_sizes, 2);
-    FlashLayout new = make_layout(new_names, new_addrs, new_sizes, 1);
-    FlashWatchResult result;
-
-    int rc = flashwatch_compare(&old, &new, &result);
-    assert(rc == 0);
-    assert(result.count == 1);
-    assert(result.events[0].type == WATCH_REMOVED);
-    assert(strcmp(result.events[0].name, "app") == 0);
-
-    flashwatch_free(&result);
-    flashlayout_free(&old);
-    flashlayout_free(&new);
-    printf("PASS: test_region_removed\n");
+static void test_create_destroy(void) {
+    FlashWatch *w = flashwatch_create();
+    assert(w != NULL);
+    assert(w->count == 0);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_create_destroy\n");
 }
 
-static void test_region_resized(void) {
-    const char *names[]     = {"boot"};
-    uint32_t    addrs[]     = {0x0000};
-    uint32_t    old_sizes[] = {0x1000};
-    uint32_t    new_sizes[] = {0x2000};
-
-    FlashLayout old = make_layout(names, addrs, old_sizes, 1);
-    FlashLayout new = make_layout(names, addrs, new_sizes, 1);
-    FlashWatchResult result;
-
-    int rc = flashwatch_compare(&old, &new, &result);
-    assert(rc == 0);
-    assert(result.count == 1);
-    assert(result.events[0].type == WATCH_RESIZED);
-    assert(result.events[0].old_size == 0x1000);
-    assert(result.events[0].new_size == 0x2000);
-
-    flashwatch_free(&result);
-    flashlayout_free(&old);
-    flashlayout_free(&new);
-    printf("PASS: test_region_resized\n");
+static void test_add_remove(void) {
+    FlashWatch *w = flashwatch_create();
+    assert(flashwatch_add(w, "FLASH", 0x08000000, 0x80000) == 0);
+    assert(flashwatch_add(w, "RAM",   0x20000000, 0x20000) == 0);
+    assert(w->count == 2);
+    assert(flashwatch_remove(w, "FLASH") == 0);
+    assert(w->count == 1);
+    assert(strcmp(w->entries[0].region_name, "RAM") == 0);
+    assert(flashwatch_remove(w, "NONEXISTENT") == -1);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_add_remove\n");
 }
 
-static void test_region_moved(void) {
-    const char *names[]     = {"app"};
-    uint32_t    old_addrs[] = {0x1000};
-    uint32_t    new_addrs[] = {0x2000};
-    uint32_t    sizes[]     = {0x4000};
+static void test_check_no_change(void) {
+    FlashWatch *w = flashwatch_create();
+    flashwatch_add(w, "FLASH", 0x08000000, 0x80000);
+    FlashLayout *l = make_layout();
+    add_region(l, "FLASH", 0x08000000, 0x80000);
+    int triggered = flashwatch_check(w, l);
+    assert(triggered == 0);
+    assert(w->entries[0].triggered == false);
+    free_layout(l);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_check_no_change\n");
+}
 
-    FlashLayout old = make_layout(names, old_addrs, sizes, 1);
-    FlashLayout new = make_layout(names, new_addrs, sizes, 1);
-    FlashWatchResult result;
+static void test_check_size_change(void) {
+    FlashWatch *w = flashwatch_create();
+    flashwatch_add(w, "FLASH", 0x08000000, 0x80000);
+    FlashLayout *l = make_layout();
+    add_region(l, "FLASH", 0x08000000, 0x90000); /* size changed */
+    int triggered = flashwatch_check(w, l);
+    assert(triggered == 1);
+    assert(w->entries[0].triggered == true);
+    assert(w->entries[0].prev_size == 0x90000);
+    free_layout(l);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_check_size_change\n");
+}
 
-    int rc = flashwatch_compare(&old, &new, &result);
-    assert(rc == 0);
-    assert(result.count == 1);
-    assert(result.events[0].type == WATCH_MOVED);
-    assert(result.events[0].old_address == 0x1000);
-    assert(result.events[0].new_address == 0x2000);
+static void test_reset(void) {
+    FlashWatch *w = flashwatch_create();
+    flashwatch_add(w, "FLASH", 0x08000000, 0x80000);
+    w->entries[0].triggered = true;
+    flashwatch_reset(w);
+    assert(w->entries[0].triggered == false);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_reset\n");
+}
 
-    flashwatch_free(&result);
-    flashlayout_free(&old);
-    flashlayout_free(&new);
-    printf("PASS: test_region_moved\n");
+static void test_get(void) {
+    FlashWatch *w = flashwatch_create();
+    flashwatch_add(w, "BOOT", 0x08000000, 0x4000);
+    FlashWatchEntry *e = flashwatch_get(w, "BOOT");
+    assert(e != NULL);
+    assert(e->base == 0x08000000);
+    assert(flashwatch_get(w, "MISSING") == NULL);
+    flashwatch_destroy(w);
+    printf("  [PASS] test_get\n");
 }
 
 int main(void) {
-    test_no_changes();
-    test_region_added();
-    test_region_removed();
-    test_region_resized();
-    test_region_moved();
+    printf("Running flashwatch tests...\n");
+    test_create_destroy();
+    test_add_remove();
+    test_check_no_change();
+    test_check_size_change();
+    test_reset();
+    test_get();
     printf("All flashwatch tests passed.\n");
     return 0;
 }

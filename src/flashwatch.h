@@ -1,61 +1,46 @@
-/**
- * flashwatch.h - Flash region change watching and monitoring
- *
- * Provides functionality to watch flash regions for changes between
- * two layout states and report which regions were added, removed,
- * or modified (size/address changes).
+/*
+ * flashwatch.h - Watch regions for changes across snapshots
  */
 
 #ifndef FLASHWATCH_H
 #define FLASHWATCH_H
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 #include "flashlayout.h"
 #include "flashregion.h"
 
-#include <stddef.h>
+#define FLASH_WATCH_NAME_MAX 64
 
-/* Types of changes detected by the watcher */
-typedef enum {
-    WATCH_ADDED   = 0,  /* Region present in new but not old */
-    WATCH_REMOVED = 1,  /* Region present in old but not new */
-    WATCH_MOVED   = 2,  /* Region address changed */
-    WATCH_RESIZED = 3,  /* Region size changed */
-    WATCH_CHANGED = 4   /* Both address and size changed */
-} FlashWatchEventType;
-
-/* A single detected change event */
 typedef struct {
-    FlashWatchEventType type;
-    char                name[64];
-    uint32_t            old_address;
-    uint32_t            new_address;
-    uint32_t            old_size;
-    uint32_t            new_size;
-} FlashWatchEvent;
+    char     region_name[FLASH_WATCH_NAME_MAX];
+    uint32_t base;
+    uint32_t size;
+    uint32_t prev_size;
+    bool     triggered;
+} FlashWatchEntry;
 
-/* Collection of watch events */
 typedef struct {
-    FlashWatchEvent *events;
+    FlashWatchEntry *entries;
     size_t           count;
     size_t           capacity;
-} FlashWatchResult;
+} FlashWatch;
 
-/**
- * Compare two layouts and populate result with all detected changes.
- * Returns 0 on success, -1 on allocation failure.
- */
-int flashwatch_compare(const FlashLayout *old_layout,
-                       const FlashLayout *new_layout,
-                       FlashWatchResult  *result);
+/* Lifecycle */
+FlashWatch *flashwatch_create(void);
+void        flashwatch_destroy(FlashWatch *watch);
 
-/**
- * Print a human-readable summary of watch events to stdout.
- */
-void flashwatch_print(const FlashWatchResult *result);
+/* Manage watched regions */
+int flashwatch_add(FlashWatch *watch, const char *region_name,
+                   uint32_t base, uint32_t size);
+int flashwatch_remove(FlashWatch *watch, const char *region_name);
+void flashwatch_reset(FlashWatch *watch);
 
-/**
- * Free memory allocated within a FlashWatchResult.
- */
-void flashwatch_free(FlashWatchResult *result);
+/* Check layout against watched regions; returns number of triggered watches */
+int flashwatch_check(FlashWatch *watch, const FlashLayout *layout);
+
+/* Retrieve a specific watch entry by name */
+FlashWatchEntry *flashwatch_get(FlashWatch *watch, const char *region_name);
 
 #endif /* FLASHWATCH_H */
