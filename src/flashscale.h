@@ -1,71 +1,50 @@
-/**
- * flashscale.h - Flash region scaling and normalization utilities
- *
- * Provides functions to scale flash region sizes and addresses
- * relative to a reference total capacity, useful for proportional
- * visualization and percentage-based reporting.
- */
-
 #ifndef FLASHSCALE_H
 #define FLASHSCALE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include "flashregion.h"
 #include "flashlayout.h"
 
-/**
- * Scaled representation of a flash region.
- */
+/* Result of scaling a single region */
 typedef struct {
-    const FlashRegion *region;   /* Pointer to original region */
-    double offset_pct;           /* Start offset as % of total capacity */
-    double size_pct;             /* Size as % of total capacity */
-    double used_pct;             /* Used bytes as % of region size */
-} FlashScaledRegion;
-
-/**
- * Result of a layout scaling operation.
- */
-typedef struct {
-    FlashScaledRegion *entries;  /* Array of scaled regions */
-    size_t count;                /* Number of entries */
-    uint32_t total_capacity;     /* Reference total capacity in bytes */
-    double overall_used_pct;     /* Overall used percentage across layout */
+    uint32_t original_size;
+    uint32_t scaled_size;
+    double   factor;
+    bool     valid;
 } FlashScaleResult;
 
-/**
- * Scale all regions in a layout relative to its total capacity.
- *
- * @param layout   Source flash layout
- * @param result   Output scale result (caller must call flashscale_free)
- * @return 0 on success, -1 on error
- */
-int flashscale_layout(const FlashLayout *layout, FlashScaleResult *result);
+/* Map of scaled results for an entire layout */
+typedef struct {
+    FlashScaleResult *results;
+    size_t            count;
+    double            factor;
+    uint32_t          total_original;
+    uint32_t          total_scaled;
+    bool              valid;
+} FlashScaleMap;
 
 /**
- * Scale a single region relative to a given total capacity.
- *
- * @param region         Source region
- * @param total_capacity Reference capacity in bytes
- * @param out            Output scaled region
- * @return 0 on success, -1 on error
+ * Scale a single flash region by the given factor.
+ * Returns a FlashScaleResult with valid=false on bad input.
  */
-int flashscale_region(const FlashRegion *region, uint32_t total_capacity,
-                      FlashScaledRegion *out);
+FlashScaleResult flash_scale_region(const FlashRegion *region, double factor);
 
 /**
- * Print a human-readable scale report to stdout.
- *
- * @param result Populated FlashScaleResult
+ * Scale all regions in a layout by the given factor.
+ * Caller must free with flash_scale_map_free().
  */
-void flashscale_print(const FlashScaleResult *result);
+FlashScaleMap flash_scale_layout(const FlashLayout *layout, double factor);
 
 /**
- * Free resources allocated by flashscale_layout.
- *
- * @param result Scale result to free
+ * Returns true if the total scaled size fits within flash_size bytes.
  */
-void flashscale_free(FlashScaleResult *result);
+bool flash_scale_fits(const FlashScaleMap *map, uint32_t flash_size);
+
+/**
+ * Free resources held by a FlashScaleMap.
+ */
+void flash_scale_map_free(FlashScaleMap *map);
 
 #endif /* FLASHSCALE_H */
