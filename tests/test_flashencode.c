@@ -1,103 +1,121 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include "../src/flashencode.h"
-#include "../src/flashregion.h"
+#include "../src/flashencode_report.h"
+#include "../src/flashlayout.h"
 
-static FlashRegion make_region(const char *name, uint32_t origin, uint32_t length) {
-    FlashRegion r;
-    memset(&r, 0, sizeof(r));
-    strncpy(r.name, name, sizeof(r.name) - 1);
-    r.origin = origin;
-    r.length = length;
-    return r;
+static void test_encode_hex_basic(void) {
+    const uint8_t data[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    char out[16];
+    FlashEncodeResult r = flash_encode_hex(data, 4, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strcmp(out, "deadbeef") == 0);
+    printf("PASS: test_encode_hex_basic\n");
 }
 
-static void test_hex_encode_decode(void) {
-    FlashRegion region = make_region("FLASH", 0x08000000, 8);
-    uint8_t raw[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0xFF, 0x12, 0x34};
-    FlashEncodeResult enc;
-    memset(&enc, 0, sizeof(enc));
-
-    int rc = flash_encode_region(&region, raw, sizeof(raw), FLASH_ENC_HEX, &enc);
-    assert(rc == 0);
-    assert(enc.encoded != NULL);
-    assert(enc.encoded_len == 16); /* 2 hex chars per byte */
-    assert(strncmp(enc.encoded, "deadbeef00ff1234", 16) == 0);
-
-    FlashEncodeResult dec;
-    memset(&dec, 0, sizeof(dec));
-    rc = flash_decode_region(enc.encoded, enc.encoded_len, FLASH_ENC_HEX, &dec);
-    assert(rc == 0);
-    assert(dec.data_len == sizeof(raw));
-    assert(memcmp(dec.data, raw, sizeof(raw)) == 0);
-
-    flash_encode_result_free(&enc);
-    flash_encode_result_free(&dec);
-    printf("PASS: test_hex_encode_decode\n");
+static void test_encode_hex_empty(void) {
+    const uint8_t data[] = {0x00};
+    char out[4];
+    FlashEncodeResult r = flash_encode_hex(data, 1, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strcmp(out, "00") == 0);
+    printf("PASS: test_encode_hex_empty\n");
 }
 
-static void test_base64_encode_decode(void) {
-    FlashRegion region = make_region("SRAM", 0x20000000, 3);
-    uint8_t raw[] = {0x4D, 0x61, 0x6E}; /* "Man" */
-    FlashEncodeResult enc;
-    memset(&enc, 0, sizeof(enc));
-
-    int rc = flash_encode_region(&region, raw, sizeof(raw), FLASH_ENC_BASE64, &enc);
-    assert(rc == 0);
-    assert(enc.encoded != NULL);
-    assert(strcmp(enc.encoded, "TWFu") == 0);
-
-    FlashEncodeResult dec;
-    memset(&dec, 0, sizeof(dec));
-    rc = flash_decode_region(enc.encoded, enc.encoded_len, FLASH_ENC_BASE64, &dec);
-    assert(rc == 0);
-    assert(dec.data_len == sizeof(raw));
-    assert(memcmp(dec.data, raw, sizeof(raw)) == 0);
-
-    flash_encode_result_free(&enc);
-    flash_encode_result_free(&dec);
-    printf("PASS: test_base64_encode_decode\n");
+static void test_encode_hex_buffer_too_small(void) {
+    const uint8_t data[] = {0xAB, 0xCD};
+    char out[3]; /* needs 5 */
+    FlashEncodeResult r = flash_encode_hex(data, 2, out, sizeof(out));
+    assert(r == FLASH_ENCODE_ERR_BUFFER);
+    printf("PASS: test_encode_hex_buffer_too_small\n");
 }
 
-static void test_binary_encode(void) {
-    FlashRegion region = make_region("BOOT", 0x00000000, 4);
-    uint8_t raw[] = {0x01, 0x02, 0x03, 0x04};
-    FlashEncodeResult enc;
-    memset(&enc, 0, sizeof(enc));
-
-    int rc = flash_encode_region(&region, raw, sizeof(raw), FLASH_ENC_BINARY, &enc);
-    assert(rc == 0);
-    assert(enc.data != NULL);
-    assert(enc.data_len == sizeof(raw));
-    assert(memcmp(enc.data, raw, sizeof(raw)) == 0);
-
-    flash_encode_result_free(&enc);
-    printf("PASS: test_binary_encode\n");
+static void test_encode_base64_basic(void) {
+    /* "Man" -> "TWFu" */
+    const uint8_t data[] = {'M', 'a', 'n'};
+    char out[16];
+    FlashEncodeResult r = flash_encode_base64(data, 3, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strcmp(out, "TWFu") == 0);
+    printf("PASS: test_encode_base64_basic\n");
 }
 
-static void test_format_name(void) {
-    assert(strcmp(flash_encode_format_name(FLASH_ENC_HEX),    "hex")    == 0);
-    assert(strcmp(flash_encode_format_name(FLASH_ENC_BINARY), "binary") == 0);
-    assert(strcmp(flash_encode_format_name(FLASH_ENC_BASE64), "base64") == 0);
-    printf("PASS: test_format_name\n");
+static void test_encode_base64_padding(void) {
+    /* "Ma" -> "TWE=" */
+    const uint8_t data[] = {'M', 'a'};
+    char out[16];
+    FlashEncodeResult r = flash_encode_base64(data, 2, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strcmp(out, "TWE=") == 0);
+    printf("PASS: test_encode_base64_padding\n");
 }
 
-static void test_null_input(void) {
-    FlashEncodeResult enc;
-    memset(&enc, 0, sizeof(enc));
-    int rc = flash_encode_region(NULL, NULL, 0, FLASH_ENC_HEX, &enc);
-    assert(rc == -1);
-    printf("PASS: test_null_input\n");
+static void test_encode_base64_null(void) {
+    char out[16];
+    FlashEncodeResult r = flash_encode_base64(NULL, 4, out, sizeof(out));
+    assert(r == FLASH_ENCODE_ERR_NULL);
+    printf("PASS: test_encode_base64_null\n");
+}
+
+static void test_encode_region_hex(void) {
+    FlashRegion reg;
+    strncpy(reg.name, "BOOT", sizeof(reg.name));
+    reg.start = 0x08000000;
+    reg.size  = 0x4000;
+    char out[256];
+    FlashEncodeResult r = flash_encode_region(&reg, FLASH_ENCODE_FMT_HEX, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strlen(out) > 0);
+    printf("PASS: test_encode_region_hex: %s\n", out);
+}
+
+static void test_encode_region_base64(void) {
+    FlashRegion reg;
+    strncpy(reg.name, "APP", sizeof(reg.name));
+    reg.start = 0x08004000;
+    reg.size  = 0x10000;
+    char out[256];
+    FlashEncodeResult r = flash_encode_region(&reg, FLASH_ENCODE_FMT_BASE64, out, sizeof(out));
+    assert(r == FLASH_ENCODE_OK);
+    assert(strlen(out) > 0);
+    printf("PASS: test_encode_region_base64: %s\n", out);
+}
+
+static void test_encode_region_bad_format(void) {
+    FlashRegion reg;
+    strncpy(reg.name, "X", sizeof(reg.name));
+    reg.start = 0; reg.size = 1;
+    char out[256];
+    FlashEncodeResult r = flash_encode_region(&reg, (FlashEncodeFormat)99, out, sizeof(out));
+    assert(r == FLASH_ENCODE_ERR_FORMAT);
+    printf("PASS: test_encode_region_bad_format\n");
+}
+
+static void test_encode_report(void) {
+    FlashLayout layout;
+    flash_layout_init(&layout);
+    FlashRegion r1, r2;
+    strncpy(r1.name, "BOOT", sizeof(r1.name)); r1.start = 0x0; r1.size = 0x1000;
+    strncpy(r2.name, "APP",  sizeof(r2.name)); r2.start = 0x1000; r2.size = 0x8000;
+    flash_layout_add(&layout, &r1);
+    flash_layout_add(&layout, &r2);
+    printf("--- Encode Report (hex) ---\n");
+    flash_encode_report_layout(&layout, FLASH_ENCODE_FMT_HEX, stdout);
+    printf("PASS: test_encode_report\n");
 }
 
 int main(void) {
-    test_hex_encode_decode();
-    test_base64_encode_decode();
-    test_binary_encode();
-    test_format_name();
-    test_null_input();
+    test_encode_hex_basic();
+    test_encode_hex_empty();
+    test_encode_hex_buffer_too_small();
+    test_encode_base64_basic();
+    test_encode_base64_padding();
+    test_encode_base64_null();
+    test_encode_region_hex();
+    test_encode_region_base64();
+    test_encode_region_bad_format();
+    test_encode_report();
     printf("All flashencode tests passed.\n");
     return 0;
 }

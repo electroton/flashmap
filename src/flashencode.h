@@ -5,49 +5,46 @@
 #include <stddef.h>
 #include "flashregion.h"
 
-/*
- * flashencode — Encode flash region data into portable binary or hex formats.
+/**
+ * flashencode — Encode flash region data into portable text formats.
+ * Supports Base64 and hexadecimal output for region serialization.
  */
 
 typedef enum {
-    FLASH_ENC_HEX    = 0,  /* Intel HEX-style encoding */
-    FLASH_ENC_BINARY = 1,  /* Raw binary encoding */
-    FLASH_ENC_BASE64 = 2   /* Base64 encoding */
-} FlashEncodeFormat;
-
-typedef struct {
-    FlashEncodeFormat format;
-    uint8_t          *data;
-    size_t            data_len;
-    char             *encoded;   /* Null-terminated output string (hex/base64) */
-    size_t            encoded_len;
+    FLASH_ENCODE_OK          =  0,
+    FLASH_ENCODE_ERR_NULL    = -1,
+    FLASH_ENCODE_ERR_BUFFER  = -2,
+    FLASH_ENCODE_ERR_FORMAT  = -3
 } FlashEncodeResult;
 
-/*
- * Encode the raw bytes of a flash region.
- * Caller must free result with flash_encode_result_free().
- * Returns 0 on success, -1 on error.
+typedef enum {
+    FLASH_ENCODE_FMT_BASE64 = 0,
+    FLASH_ENCODE_FMT_HEX    = 1
+} FlashEncodeFormat;
+
+/**
+ * Encode raw bytes as Base64 into out (null-terminated).
+ * Returns FLASH_ENCODE_OK on success.
  */
-int flash_encode_region(const FlashRegion *region,
-                        const uint8_t     *raw_data,
-                        size_t             raw_len,
-                        FlashEncodeFormat  format,
-                        FlashEncodeResult *out);
+FlashEncodeResult flash_encode_base64(const uint8_t *data, size_t len,
+                                       char *out, size_t out_size);
 
-/*
- * Decode a previously encoded buffer back to raw bytes.
- * Caller must free out->data.
- * Returns 0 on success, -1 on error.
+/**
+ * Encode raw bytes as lowercase hex into out (null-terminated).
+ * Returns FLASH_ENCODE_OK on success.
  */
-int flash_decode_region(const char        *encoded,
-                        size_t             encoded_len,
-                        FlashEncodeFormat  format,
-                        FlashEncodeResult *out);
+FlashEncodeResult flash_encode_hex(const uint8_t *data, size_t len,
+                                    char *out, size_t out_size);
 
-/* Free internal buffers of a FlashEncodeResult. */
-void flash_encode_result_free(FlashEncodeResult *result);
+/**
+ * Encode a FlashRegion descriptor (name:start:size) using the given format.
+ * Returns FLASH_ENCODE_OK on success.
+ */
+FlashEncodeResult flash_encode_region(const FlashRegion *region,
+                                       FlashEncodeFormat fmt,
+                                       char *out, size_t out_size);
 
-/* Return a human-readable name for the given format. */
-const char *flash_encode_format_name(FlashEncodeFormat format);
+/** Return a human-readable string for a FlashEncodeResult code. */
+const char *flash_encode_result_str(FlashEncodeResult result);
 
 #endif /* FLASHENCODE_H */
