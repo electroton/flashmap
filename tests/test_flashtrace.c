@@ -1,104 +1,129 @@
+/*
+ * test_flashtrace.c - Unit tests for flashtrace module
+ */
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include "../src/flashtrace.h"
+#include "../src/flashtrace_report.h"
 
-static void test_init(void) {
+static void test_init_and_reset(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
-    assert(trace.count == 0);
-    printf("[PASS] test_init\n");
-}
+    flash_trace_init(&trace);
+    assert(trace.count    == 0);
+    assert(trace.next_seq == 0);
+    assert(trace.enabled  == 1);
 
-static void test_record_single(void) {
-    FlashTrace trace;
-    flashtrace_init(&trace);
-
-    int ret = flashtrace_record(&trace, "FLASH_TEXT", 0x08000000, 0x4000,
-                                TRACE_ACCESS_READ);
-    assert(ret == 0);
+    flash_trace_record(&trace, TRACE_EVENT_READ, 0x1000, 256, "bootloader");
     assert(trace.count == 1);
-    assert(strcmp(trace.entries[0].region_name, "FLASH_TEXT") == 0);
-    assert(trace.entries[0].address == 0x08000000);
-    assert(trace.entries[0].size == 0x4000);
-    assert(trace.entries[0].access_type == TRACE_ACCESS_READ);
-    assert(trace.entries[0].hit_count == 1);
-    printf("[PASS] test_record_single\n");
+
+    flash_trace_reset(&trace);
+    assert(trace.count    == 0);
+    assert(trace.next_seq == 0);
+    printf("PASS: test_init_and_reset\n");
 }
 
-static void test_record_increments_hit_count(void) {
+static void test_record_and_get(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
+    flash_trace_init(&trace);
 
-    flashtrace_record(&trace, "FLASH_DATA", 0x08004000, 0x1000,
-                      TRACE_ACCESS_WRITE);
-    flashtrace_record(&trace, "FLASH_DATA", 0x08004000, 0x1000,
-                      TRACE_ACCESS_WRITE);
-    flashtrace_record(&trace, "FLASH_DATA", 0x08004000, 0x1000,
-                      TRACE_ACCESS_WRITE);
+    int seq = flash_trace_record(&trace, TRACE_EVENT_WRITE, 0x2000, 512, "firmware");
+    assert(seq == 0);
+    assert(flash_trace_count(&trace) == 1);
 
-    assert(trace.count == 1);
-    assert(trace.entries[0].hit_count == 3);
-    printf("[PASS] test_record_increments_hit_count\n");
+    const FlashTraceEvent *ev = flash_trace_get(&trace, 0);
+    assert(ev != NULL);
+    assert(ev->type    == TRACE_EVENT_WRITE);
+    assert(ev->address == 0x2000);
+    assert(ev->size    == 512);
+    assert(strcmp(ev->region_name, "firmware") == 0);
+    assert(ev->sequence == 0);
+
+    assert(flash_trace_get(&trace, 1)  == NULL);
+    assert(flash_trace_get(&trace, -1) == NULL);
+    printf("PASS: test_record_and_get\n");
 }
 
-static void test_record_different_access_types(void) {
+static void test_enable_disable(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
+    flash_trace_init(&trace);
 
-    flashtrace_record(&trace, "BOOT", 0x08000000, 0x200, TRACE_ACCESS_READ);
-    flashtrace_record(&trace, "BOOT", 0x08000000, 0x200, TRACE_ACCESS_EXEC);
+    flash_trace_disable(&trace);
+    int seq = flash_trace_record(&trace, TRACE_EVENT_ERASE, 0x3000, 4096, "data");
+    assert(seq == -1);
+    assert(flash_trace_count(&trace) == 0);
 
-    assert(trace.count == 2);
-    printf("[PASS] test_record_different_access_types\n");
+    flash_trace_enable(&trace);
+    seq = flash_trace_record(&trace, TRACE_EVENT_ERASE, 0x3000, 4096, "data");
+    assert(seq == 0);
+    assert(flash_trace_count(&trace) == 1);
+    printf("PASS: test_enable_disable\n");
 }
 
-static void test_find_existing(void) {
+static void test_find_by_region(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
+    flash_trace_init(&trace);
 
-    flashtrace_record(&trace, "CONFIG", 0x0803F000, 0x800, TRACE_ACCESS_READ);
+    flash_trace_record(&trace, TRACE_EVENT_READ,  0x1000, 128, "boot");
+    flash_trace_record(&trace, TRACE_EVENT_WRITE, 0x2000, 256, "app");
+    flash_trace_record(&trace, TRACE_EVENT_READ,  0x1100, 64,  "boot");
+    flash_trace_record(&trace, TRACE_EVENT_ERASE, 0x3000, 512, "data");
 
-    const FlashTraceEntry *e = flashtrace_find(&trace, "CONFIG",
-                                               TRACE_ACCESS_READ);
-    assert(e != NULL);
-    assert(e->address == 0x0803F000);
-    assert(e->hit_count == 1);
-    printf("[PASS] test_find_existing\n");
+    FlashTraceEvent buf[16];
+    int n = flash_trace_find_by_region(&trace, "boot", buf, 16);
+    assert(n == 2);
+    assert(buf[0].address == 0x1000);
+    assert(buf[1].address == 0x1100);
+
+    n = flash_trace_find_by_region(&trace, "missing", buf, 16);
+    assert(n == 0);
+    printf("PASS: test_find_by_region\n");
 }
 
-static void test_find_missing(void) {
+static void test_find_by_type(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
+    flash_trace_init(&trace);
 
-    const FlashTraceEntry *e = flashtrace_find(&trace, "NONEXISTENT",
-                                               TRACE_ACCESS_READ);
-    assert(e == NULL);
-    printf("[PASS] test_find_missing\n");
+    flash_trace_record(&trace, TRACE_EVENT_READ,   0x1000, 64,  "r1");
+    flash_trace_record(&trace, TRACE_EVENT_WRITE,  0x2000, 128, "r2");
+    flash_trace_record(&trace, TRACE_EVENT_READ,   0x1080, 64,  "r1");
+    flash_trace_record(&trace, TRACE_EVENT_VERIFY, 0x2000, 128, "r2");
+
+    FlashTraceEvent buf[16];
+    int n = flash_trace_find_by_type(&trace, TRACE_EVENT_READ, buf, 16);
+    assert(n == 2);
+
+    n = flash_trace_find_by_type(&trace, TRACE_EVENT_ERASE, buf, 16);
+    assert(n == 0);
+    printf("PASS: test_find_by_type\n");
 }
 
-static void test_reset(void) {
+static void test_report_csv(void) {
     FlashTrace trace;
-    flashtrace_init(&trace);
+    flash_trace_init(&trace);
 
-    flashtrace_record(&trace, "A", 0x1000, 0x100, TRACE_ACCESS_READ);
-    flashtrace_record(&trace, "B", 0x2000, 0x200, TRACE_ACCESS_WRITE);
-    assert(trace.count == 2);
+    flash_trace_record(&trace, TRACE_EVENT_READ,  0xA000, 256, "sector0");
+    flash_trace_record(&trace, TRACE_EVENT_WRITE, 0xB000, 512, "sector1");
 
-    flashtrace_reset(&trace);
-    assert(trace.count == 0);
-    printf("[PASS] test_reset\n");
+    int rc = flash_trace_report_csv(&trace, "/tmp/flashtrace_test.csv");
+    assert(rc == 0);
+
+    rc = flash_trace_report_csv(NULL, "/tmp/flashtrace_test.csv");
+    assert(rc == -1);
+
+    rc = flash_trace_report_csv(&trace, NULL);
+    assert(rc == -1);
+    printf("PASS: test_report_csv\n");
 }
 
 int main(void) {
-    printf("=== flashtrace tests ===\n");
-    test_init();
-    test_record_single();
-    test_record_increments_hit_count();
-    test_record_different_access_types();
-    test_find_existing();
-    test_find_missing();
-    test_reset();
+    printf("Running flashtrace tests...\n");
+    test_init_and_reset();
+    test_record_and_get();
+    test_enable_disable();
+    test_find_by_region();
+    test_find_by_type();
+    test_report_csv();
     printf("All flashtrace tests passed.\n");
     return 0;
 }
