@@ -55,4 +55,15 @@ uint32_t            flash_segment_end_address(const FlashSegment *seg);
 FlashSegmentType    flash_segment_type_from_string(const char *type_str);
 const char         *flash_segment_type_to_string(FlashSegmentType type);
 
+/**
+ * flash_segment_contains_address - Check if an address falls within any region of a segment.
+ *
+ * @seg:  Pointer to the FlashSegment to search.
+ * @addr: The address to test.
+ *
+ * Returns 1 if the address is covered by at least one region in the segment,
+ * 0 otherwise (including if seg is NULL or has no regions).
+ */
+int flash_segment_contains_address(const FlashSegment *seg, uint32_t addr);
+
 #endif /* FLASHSEGMENT_H */
