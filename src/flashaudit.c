@@ -1,3 +1,4 @@
+```c
 #include "flashaudit.h"
 #include <stdlib.h>
 #include <string.h>
@@ -5,8 +6,13 @@
 
 static AuditResult *result_new(void) {
     AuditResult *r = calloc(1, sizeof(AuditResult));
+    if (!r) return NULL;
     r->capacity = 16;
     r->findings = calloc(r->capacity, sizeof(AuditFinding));
+    if (!r->findings) {
+        free(r);
+        return NULL;
+    }
     return r;
 }
 
@@ -67,38 +73,5 @@ static void apply_rule(const FlashLayout *layout, const AuditRule *rule,
                         snprintf(msg, sizeof(msg),
                                  "Region '%s' fill %u%% exceeds threshold %u%%",
                                  reg->name, pct, rule->threshold);
-                        result_push(result, rule->severity, rule->type, reg->name, msg);
-                    }
-                }
-                break;
-            default:
-                break;
-        }
-    }
-}
-
-AuditResult *flash_audit_run(const FlashLayout *layout,
-                             const AuditRule   *rules,
-                             int                rule_count) {
-    AuditResult *result = result_new();
-    for (int i = 0; i < rule_count; i++)
-        apply_rule(layout, &rules[i], result);
-    return result;
-}
-
-int flash_audit_count_by_severity(const AuditResult *result, AuditSeverity sev) {
-    int n = 0;
-    for (int i = 0; i < result->count; i++)
-        if (result->findings[i].severity == sev) n++;
-    return n;
-}
-
-bool flash_audit_has_errors(const AuditResult *result) {
-    return flash_audit_count_by_severity(result, AUDIT_ERROR) > 0;
-}
-
-void flash_audit_result_free(AuditResult *result) {
-    if (!result) return;
-    free(result->findings);
-    free(result);
-}
+                        result_push(result, rule->severity, rule->type,
+```
