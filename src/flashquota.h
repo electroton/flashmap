@@ -2,48 +2,31 @@
 #define FLASHQUOTA_H
 
 #include <stdint.h>
-#include <stddef.h>
-#include "flashregion.h"
+#include <stdbool.h>
+#include "flashlayout.h"
 
-/* Quota enforcement modes */
+#define FLASH_QUOTA_NAME_MAX 64
+
 typedef enum {
-    QUOTA_MODE_WARN  = 0,  /* Emit warning when quota exceeded */
-    QUOTA_MODE_ERROR = 1   /* Treat quota violation as an error */
-} FlashQuotaMode;
+    FLASH_QUOTA_OK,
+    FLASH_QUOTA_WARNING,
+    FLASH_QUOTA_FULL,
+    FLASH_QUOTA_EXCEEDED,
+    FLASH_QUOTA_ERROR
+} FlashQuotaStatus;
 
-/* A quota rule applied to a named region */
 typedef struct {
-    char        region_name[64]; /* Region the quota applies to */
-    uint32_t    max_used;        /* Maximum allowed used bytes   */
-    float       max_percent;     /* Maximum allowed usage (0-100)*/
-    FlashQuotaMode mode;
-} FlashQuotaRule;
+    char     region_name[FLASH_QUOTA_NAME_MAX];
+    uint32_t max_bytes;
+    uint32_t used_bytes;
+} FlashQuota;
 
-/* Result of checking a single quota rule */
-typedef struct {
-    FlashQuotaRule rule;
-    uint32_t       actual_used;
-    float          actual_percent;
-    int            violated;     /* 1 if quota exceeded, 0 otherwise */
-} FlashQuotaResult;
-
-/* Collection of results */
-typedef struct {
-    FlashQuotaResult *results;
-    size_t            count;
-    int               any_error;  /* 1 if any ERROR-mode rule was violated */
-} FlashQuotaReport;
-
-/*
- * Check all quota rules against the given regions.
- * Caller must free the report with flash_quota_report_free().
- */
-FlashQuotaReport flash_quota_check(const FlashQuotaRule *rules,
-                                   size_t                rule_count,
-                                   const FlashRegion    *regions,
-                                   size_t                region_count);
-
-void flash_quota_report_print(const FlashQuotaReport *report);
-void flash_quota_report_free(FlashQuotaReport *report);
+FlashQuota       flash_quota_create(const char *region_name, uint32_t max_bytes);
+bool             flash_quota_check(const FlashQuota *q);
+FlashQuotaStatus flash_quota_status(const FlashQuota *q);
+void             flash_quota_update(FlashQuota *q, uint32_t used_bytes);
+uint32_t         flash_quota_remaining(const FlashQuota *q);
+float            flash_quota_usage_percent(const FlashQuota *q);
+void             flash_quota_apply_to_layout(FlashQuota *quotas, int count, const FlashLayout *layout);
 
 #endif /* FLASHQUOTA_H */
