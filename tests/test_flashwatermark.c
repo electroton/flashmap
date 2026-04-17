@@ -1,3 +1,4 @@
+```c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -101,19 +102,36 @@ static void test_multiple_regions(void) {
         char name[16];
         snprintf(name, sizeof(name), "region%d", i);
         flash_watermark_record(&set, name, (uint32_t)(i * 0x10000),
-                               0x10000, (uint32_t)(i * 0x800));
+                               0x10000, (uint32_t)(i * 0x1000));
     }
-    assert(set.count == 10);
 
-    const FlashWatermark *m = flash_watermark_find(&set, "region5");
-    assert(m != NULL);
-    assert(m->peak_used == 5 * 0x800);
+    assert(set.count == 10);
+    for (int i = 0; i < 10; i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "region%d", i);
+        const FlashWatermark *m = flash_watermark_find(&set, name);
+        assert(m != NULL);
+        assert(m->current_used == (uint32_t)(i * 0x1000));
+    }
+
+    flash_watermark_set_free(&set);
+}
+
+/* Verify that recording used > capacity is rejected gracefully */
+static void test_record_overflow_rejected(void) {
+    FlashWatermarkSet set;
+    flash_watermark_set_init(&set);
+
+    int rc = flash_watermark_record(&set, "OVF", 0x0, 0x1000, 0x2000);
+    assert(rc != 0);          /* must fail */
+    assert(set.count == 0);   /* no entry added */
 
     flash_watermark_set_free(&set);
 }
 
 int main(void) {
-    printf("=== test_flashwatermark ===\n");
+    printf("Running flashwatermark tests...\n");
+
     RUN_TEST(test_init_and_free);
     RUN_TEST(test_record_new_entry);
     RUN_TEST(test_record_updates_peak);
@@ -121,6 +139,9 @@ int main(void) {
     RUN_TEST(test_find_missing);
     RUN_TEST(test_reset_peaks);
     RUN_TEST(test_multiple_regions);
-    printf("\nResults: %d/%d tests passed.\n", tests_passed, tests_run);
-    return (tests_passed == tests_run) ? EXIT_SUCCESS : EXIT_FAILURE;
+    RUN_TEST(test_record_overflow_rejected);
+
+    printf("\n%d/%d tests passed.\n", tests_passed, tests_run);
+    return (tests_passed == tests_run) ? 0 : 1;
 }
+```
