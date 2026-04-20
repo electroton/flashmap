@@ -1,110 +1,92 @@
 #include <stdio.h>
-#include <string.h>
 #include <assert.h>
+#include <string.h>
 #include "../src/flashpin.h"
-#include "../src/flashregion.h"
+#include "../src/flashpin_report.h"
 
-static FlashRegion make_region(const char *name, uint32_t start, uint32_t size) {
-    FlashRegion r;
-    memset(&r, 0, sizeof(r));
-    strncpy(r.name, name, sizeof(r.name) - 1);
-    r.start  = start;
-    r.size   = size;
-    r.end    = start + size - 1;
-    return r;
+static void test_create_destroy(void) {
+    FlashPinSet *ps = flashpin_create();
+    assert(ps != NULL);
+    assert(flashpin_count(ps) == 0);
+    flashpin_destroy(ps);
+    printf("[PASS] test_create_destroy\n");
 }
 
-static void test_init(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    assert(ps.count == 0);
-    printf("[PASS] test_init\n");
-}
+static void test_add_and_find(void) {
+    FlashPinSet *ps = flashpin_create();
+    assert(flashpin_add(ps, "reset_vector", 0x08000000, FLASH_PIN_ENTRY) == 0);
+    assert(flashpin_add(ps, "end_of_flash", 0x080FFFFF, FLASH_PIN_BOUNDARY) == 0);
+    assert(flashpin_count(ps) == 2);
 
-static void test_add_address(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    assert(flash_pin_add_address(&ps, "reset_vector", 0x08000000));
-    assert(ps.count == 1);
-    assert(ps.pins[0].type == FLASH_PIN_TYPE_ADDRESS);
-    assert(ps.pins[0].address == 0x08000000);
-    assert(strcmp(ps.pins[0].label, "reset_vector") == 0);
-    printf("[PASS] test_add_address\n");
-}
-
-static void test_add_region(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    FlashRegion r = make_region("bootloader", 0x08000000, 0x4000);
-    assert(flash_pin_add_region(&ps, "boot_pin", &r));
-    assert(ps.count == 1);
-    assert(ps.pins[0].type == FLASH_PIN_TYPE_REGION);
-    assert(ps.pins[0].address == 0x08000000);
-    assert(strcmp(ps.pins[0].region_name, "bootloader") == 0);
-    printf("[PASS] test_add_region\n");
-}
-
-static void test_add_offset(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    FlashRegion r = make_region("app", 0x08004000, 0x10000);
-    assert(flash_pin_add_offset(&ps, "isr_table", &r, 0x100));
-    assert(ps.pins[0].type == FLASH_PIN_TYPE_OFFSET);
-    assert(ps.pins[0].address == 0x08004100);
-    assert(ps.pins[0].offset  == 0x100);
-    printf("[PASS] test_add_offset\n");
-}
-
-static void test_find_and_remove(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    flash_pin_add_address(&ps, "marker_a", 0x1000);
-    flash_pin_add_address(&ps, "marker_b", 0x2000);
-
-    const FlashPin *p = flash_pin_find(&ps, "marker_a");
+    FlashPin *p = flashpin_find(ps, "reset_vector");
     assert(p != NULL);
-    assert(p->address == 0x1000);
+    assert(p->address == 0x08000000);
+    assert(p->type == FLASH_PIN_ENTRY);
+    assert(!p->locked);
 
-    assert(flash_pin_remove(&ps, "marker_a"));
-    assert(ps.count == 1);
-    assert(flash_pin_find(&ps, "marker_a") == NULL);
-    assert(!flash_pin_remove(&ps, "nonexistent"));
-    printf("[PASS] test_find_and_remove\n");
+    FlashPin *p2 = flashpin_find_by_address(ps, 0x080FFFFF);
+    assert(p2 != NULL);
+    assert(strcmp(p2->name, "end_of_flash") == 0);
+
+    flashpin_destroy(ps);
+    printf("[PASS] test_add_and_find\n");
 }
 
-static void test_hits_address(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    flash_pin_add_address(&ps, "cksum", 0x0800FFFC);
-
-    const FlashPin *hit = NULL;
-    assert(flash_pin_hits_address(&ps, 0x0800FFFC, &hit));
-    assert(hit != NULL && strcmp(hit->label, "cksum") == 0);
-    assert(!flash_pin_hits_address(&ps, 0x0800FFFD, &hit));
-    printf("[PASS] test_hits_address\n");
+static void test_remove(void) {
+    FlashPinSet *ps = flashpin_create();
+    flashpin_add(ps, "marker_a", 0x1000, FLASH_PIN_MARKER);
+    flashpin_add(ps, "marker_b", 0x2000, FLASH_PIN_MARKER);
+    assert(flashpin_remove(ps, "marker_a") == 0);
+    assert(flashpin_count(ps) == 1);
+    assert(flashpin_find(ps, "marker_a") == NULL);
+    assert(flashpin_find(ps, "marker_b") != NULL);
+    assert(flashpin_remove(ps, "nonexistent") == -1);
+    flashpin_destroy(ps);
+    printf("[PASS] test_remove\n");
 }
 
-static void test_capacity_limit(void) {
-    FlashPinSet ps;
-    flash_pin_set_init(&ps);
-    for (int i = 0; i < FLASH_PIN_MAX_PINS; i++) {
-        char lbl[32];
-        snprintf(lbl, sizeof(lbl), "pin_%d", i);
-        assert(flash_pin_add_address(&ps, lbl, (uint32_t)(i * 4)));
-    }
-    assert(ps.count == FLASH_PIN_MAX_PINS);
-    assert(!flash_pin_add_address(&ps, "overflow", 0xDEAD));
-    printf("[PASS] test_capacity_limit\n");
+static void test_lock_unlock(void) {
+    FlashPinSet *ps = flashpin_create();
+    flashpin_add(ps, "locked_pin", 0x3000, FLASH_PIN_ENTRY);
+    assert(flashpin_lock(ps, "locked_pin") == 0);
+    FlashPin *p = flashpin_find(ps, "locked_pin");
+    assert(p->locked == true);
+    assert(flashpin_remove(ps, "locked_pin") == -2);
+    assert(flashpin_unlock(ps, "locked_pin") == 0);
+    assert(p->locked == false);
+    assert(flashpin_remove(ps, "locked_pin") == 0);
+    flashpin_destroy(ps);
+    printf("[PASS] test_lock_unlock\n");
+}
+
+static void test_report(void) {
+    FlashPinSet *ps = flashpin_create();
+    flashpin_add(ps, "entry_point",  0x08000000, FLASH_PIN_ENTRY);
+    flashpin_add(ps, "sector_end",   0x0800FFFF, FLASH_PIN_BOUNDARY);
+    flashpin_add(ps, "debug_marker", 0x08004000, FLASH_PIN_MARKER);
+    flashpin_lock(ps, "entry_point");
+    flashpin_report_print(ps, stdout);
+    flashpin_destroy(ps);
+    printf("[PASS] test_report\n");
+}
+
+static void test_null_safety(void) {
+    assert(flashpin_add(NULL, "x", 0, FLASH_PIN_MARKER) == -1);
+    assert(flashpin_find(NULL, "x") == NULL);
+    assert(flashpin_find_by_address(NULL, 0) == NULL);
+    assert(flashpin_remove(NULL, "x") == -1);
+    assert(flashpin_count(NULL) == 0);
+    flashpin_report_print(NULL, stdout);
+    printf("[PASS] test_null_safety\n");
 }
 
 int main(void) {
-    test_init();
-    test_add_address();
-    test_add_region();
-    test_add_offset();
-    test_find_and_remove();
-    test_hits_address();
-    test_capacity_limit();
+    test_create_destroy();
+    test_add_and_find();
+    test_remove();
+    test_lock_unlock();
+    test_report();
+    test_null_safety();
     printf("All flashpin tests passed.\n");
     return 0;
 }
