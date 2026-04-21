@@ -62,6 +62,21 @@ int flashalias_count(const FlashAliasMap *map) {
     return map->count;
 }
 
+/*
+ * flashalias_lookup_by_original - Find the first alias assigned to an original name.
+ *
+ * Returns the alias string if found, or NULL if no alias exists for the given
+ * original name. Useful for reverse lookups when iterating region aliases.
+ */
+const char *flashalias_lookup_by_original(const FlashAliasMap *map, const char *original) {
+    if (!map || !original) return NULL;
+    for (int i = 0; i < map->count; i++) {
+        if (strcmp(map->entries[i].original, original) == 0)
+            return map->entries[i].alias;
+    }
+    return NULL;
+}
+
 void flashalias_print(const FlashAliasMap *map, FILE *out) {
     if (!map || !out) return;
     fprintf(out, "Flash Alias Map (%d entries):\n", map->count);
