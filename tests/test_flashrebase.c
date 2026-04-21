@@ -1,117 +1,122 @@
-#include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
+#include <assert.h>
 #include "../src/flashrebase.h"
-#include "../src/flashregion.h"
 #include "../src/flashlayout.h"
+#include "../src/flashregion.h"
 
-/* ------------------------------------------------------------------ helpers */
-
-static FlashRegion make_region(const char *name, uint32_t start, uint32_t size)
-{
-    FlashRegion r;
-    memset(&r, 0, sizeof(r));
-    strncpy(r.name, name, sizeof(r.name) - 1);
-    r.start = start;
-    r.size  = size;
-    return r;
-}
-
-static FlashLayout make_layout_two(void)
+/* ---- helpers ---- */
+static FlashLayout make_layout(uint32_t base)
 {
     FlashLayout l;
-    flash_layout_init(&l);
-    FlashRegion a = make_region("text",  0x08000000, 0x10000);
-    FlashRegion b = make_region("data",  0x08010000, 0x4000);
-    flash_layout_add(&l, &a);
-    flash_layout_add(&l, &b);
+    l.count = 3;
+    l.regions = malloc(3 * sizeof(FlashRegion));
+    assert(l.regions);
+    l.regions[0] = (FlashRegion){ .name = "boot",  .start = base,        .size = 0x4000 };
+    l.regions[1] = (FlashRegion){ .name = "app",   .start = base+0x4000, .size = 0x8000 };
+    l.regions[2] = (FlashRegion){ .name = "config", .start = base+0xC000, .size = 0x1000 };
     return l;
 }
 
-/* ------------------------------------------------------------------- tests */
-
-static void test_rebase_region_positive_offset(void)
+static void free_src_layout(FlashLayout *l)
 {
-    FlashRegion r = make_region("code", 0x08000000, 0x8000);
-    FlashRebaseResult res = flash_rebase_region(&r, 0x10000);
-    assert(res == REBASE_OK);
-    assert(r.start == 0x08010000);
-    printf("PASS: test_rebase_region_positive_offset\n");
+    free(l->regions);
+    l->regions = NULL;
+    l->count = 0;
 }
 
-static void test_rebase_region_negative_offset(void)
+/* ---- tests ---- */
+
+static void test_rebase_basic(void)
 {
-    FlashRegion r = make_region("code", 0x08010000, 0x8000);
-    FlashRebaseResult res = flash_rebase_region(&r, -0x10000);
-    assert(res == REBASE_OK);
-    assert(r.start == 0x08000000);
-    printf("PASS: test_rebase_region_negative_offset\n");
+    FlashLayout src = make_layout(0x08000000);
+    FlashLayout out = {0};
+    FlashRebaseOptions opts = { .check_overflow = true, .copy_names = false };
+
+    FlashRebaseResult r = flash_rebase(&src, 0x20000000, opts, &out);
+    assert(r == FLASH_REBASE_OK);
+    assert(out.count == 3);
+    assert(out.regions[0].start == 0x20000000);
+    assert(out.regions[1].start == 0x20004000);
+    assert(out.regions[2].start == 0x2000C000);
+    /* sizes must be unchanged */
+    assert(out.regions[0].size == 0x4000);
+    assert(out.regions[1].size == 0x8000);
+
+    flash_rebase_layout_free(&out, false);
+    free_src_layout(&src);
+    printf("PASS test_rebase_basic\n");
 }
 
-static void test_rebase_region_underflow(void)
+static void test_rebase_to_zero(void)
 {
-    FlashRegion r = make_region("code", 0x00000100, 0x100);
-    /* Shifting below 0 should fail */
-    FlashRebaseResult res = flash_rebase_region(&r, -0x200);
-    assert(res == REBASE_ERR_UNDERFLOW);
-    /* Region must remain unchanged */
-    assert(r.start == 0x00000100);
-    printf("PASS: test_rebase_region_underflow\n");
+    FlashLayout src = make_layout(0x08000000);
+    FlashLayout out = {0};
+    FlashRebaseOptions opts = { .check_overflow = false, .copy_names = false };
+
+    FlashRebaseResult r = flash_rebase(&src, 0x00000000, opts, &out);
+    assert(r == FLASH_REBASE_OK);
+    assert(out.regions[0].start == 0x00000000);
+    assert(out.regions[2].start == 0x0000C000);
+
+    flash_rebase_layout_free(&out, false);
+    free_src_layout(&src);
+    printf("PASS test_rebase_to_zero\n");
 }
 
-static void test_rebase_region_null(void)
+static void test_rebase_overflow_detected(void)
 {
-    FlashRebaseResult res = flash_rebase_region(NULL, 0x1000);
-    assert(res == REBASE_ERR_NULL);
-    printf("PASS: test_rebase_region_null\n");
+    FlashLayout src = make_layout(0xFFFF0000);
+    FlashLayout out = {0};
+    FlashRebaseOptions opts = { .check_overflow = true, .copy_names = false };
+
+    /* Rebasing to 0xFFFF0000 + some positive delta should overflow */
+    FlashRebaseResult r = flash_rebase(&src, 0xFFFF8000, opts, &out);
+    assert(r == FLASH_REBASE_ERR_OVERFLOW);
+    assert(out.regions == NULL);
+
+    free_src_layout(&src);
+    printf("PASS test_rebase_overflow_detected\n");
 }
 
-static void test_rebase_layout_uniform_offset(void)
+static void test_rebase_null_args(void)
 {
-    FlashLayout l = make_layout_two();
-    FlashRebaseResult res = flash_rebase_layout(&l, 0x20000);
-    assert(res == REBASE_OK);
-    assert(l.regions[0].start == 0x08020000);
-    assert(l.regions[1].start == 0x08030000);
-    flash_layout_free(&l);
-    printf("PASS: test_rebase_layout_uniform_offset\n");
+    FlashLayout out = {0};
+    FlashRebaseOptions opts = { .check_overflow = false, .copy_names = false };
+    assert(flash_rebase(NULL, 0, opts, &out) == FLASH_REBASE_ERR_NULL);
+    assert(flash_rebase(NULL, 0, opts, NULL) == FLASH_REBASE_ERR_NULL);
+    printf("PASS test_rebase_null_args\n");
 }
 
-static void test_rebase_layout_to_new_base(void)
+static void test_rebase_empty_layout(void)
 {
-    FlashLayout l = make_layout_two();
-    /* Rebase so the lowest region starts at 0x20000000 */
-    FlashRebaseResult res = flash_rebase_layout_to(&l, 0x20000000);
-    assert(res == REBASE_OK);
-    assert(l.regions[0].start == 0x20000000);
-    assert(l.regions[1].start == 0x20010000);
-    flash_layout_free(&l);
-    printf("PASS: test_rebase_layout_to_new_base\n");
+    FlashLayout src = { .count = 0, .regions = NULL };
+    FlashLayout out = {0};
+    FlashRebaseOptions opts = { .check_overflow = true, .copy_names = false };
+
+    FlashRebaseResult r = flash_rebase(&src, 0x1000, opts, &out);
+    assert(r == FLASH_REBASE_OK);
+    assert(out.count == 0);
+    assert(out.regions == NULL);
+    printf("PASS test_rebase_empty_layout\n");
 }
 
-static void test_rebase_min_address(void)
+static void test_result_str(void)
 {
-    FlashLayout l = make_layout_two();
-    uint32_t min = 0;
-    FlashRebaseResult res = flash_rebase_min_address(&l, &min);
-    assert(res == REBASE_OK);
-    assert(min == 0x08000000);
-    flash_layout_free(&l);
-    printf("PASS: test_rebase_min_address\n");
+    assert(strcmp(flash_rebase_result_str(FLASH_REBASE_OK), "OK") == 0);
+    assert(strcmp(flash_rebase_result_str(FLASH_REBASE_ERR_OVERFLOW), "Address overflow") == 0);
+    printf("PASS test_result_str\n");
 }
-
-/* -------------------------------------------------------------------  main */
 
 int main(void)
 {
-    test_rebase_region_positive_offset();
-    test_rebase_region_negative_offset();
-    test_rebase_region_underflow();
-    test_rebase_region_null();
-    test_rebase_layout_uniform_offset();
-    test_rebase_layout_to_new_base();
-    test_rebase_min_address();
+    test_rebase_basic();
+    test_rebase_to_zero();
+    test_rebase_overflow_detected();
+    test_rebase_null_args();
+    test_rebase_empty_layout();
+    test_result_str();
     printf("All flashrebase tests passed.\n");
     return 0;
 }

@@ -1,69 +1,59 @@
 /**
- * flashrebase.h - Flash region address rebasing utilities
+ * flashrebase.h - Rebase flash regions to a new base address
  *
- * Provides functionality to shift flash regions to a new base address,
- * useful when retargeting firmware for different memory-mapped hardware.
+ * Provides utilities to shift an entire FlashLayout to a new origin,
+ * useful when targeting different memory-mapped regions or when
+ * comparing layouts built for different hardware variants.
  */
 
 #ifndef FLASHREBASE_H
 #define FLASHREBASE_H
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 #include "flashregion.h"
 #include "flashlayout.h"
-#include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define FLASH_REBASE_ADDR_MAX UINT32_MAX
 
-/**
- * Result codes for rebase operations.
- */
+/** Result codes for rebase operations */
 typedef enum {
-    REBASE_OK            = 0,
-    REBASE_ERR_NULL      = -1,
-    REBASE_ERR_OVERFLOW  = -2,
-    REBASE_ERR_UNDERFLOW = -3
+    FLASH_REBASE_OK            = 0,
+    FLASH_REBASE_ERR_NULL      = -1,
+    FLASH_REBASE_ERR_OVERFLOW  = -2,
+    FLASH_REBASE_ERR_UNDERFLOW = -3,
+    FLASH_REBASE_ERR_ALLOC     = -4
 } FlashRebaseResult;
 
-/**
- * Rebase a single FlashRegion by applying an offset to its start address.
- *
- * @param region  Pointer to the region to rebase (modified in place).
- * @param offset  Signed offset in bytes to apply.
- * @return        REBASE_OK on success, or an error code.
- */
-FlashRebaseResult flash_rebase_region(FlashRegion *region, int64_t offset);
+/** Options controlling rebase behaviour */
+typedef struct {
+    bool check_overflow; /**< Abort if any address would exceed UINT32_MAX */
+    bool copy_names;     /**< Deep-copy region name strings into output */
+} FlashRebaseOptions;
 
 /**
- * Rebase all regions in a FlashLayout by applying a uniform offset.
+ * Rebase all regions in @p layout so the lowest start address becomes
+ * @p new_base.  The rebased layout is written to @p out.
  *
- * @param layout  Pointer to the layout to rebase (modified in place).
- * @param offset  Signed offset in bytes to apply to every region.
- * @return        REBASE_OK on success, or the first error encountered.
+ * @param layout   Source layout (read-only).
+ * @param new_base Desired base address for the lowest region.
+ * @param opts     Behavioural options.
+ * @param out      Output layout; caller must free with flash_rebase_layout_free().
+ * @return FLASH_REBASE_OK on success, error code otherwise.
  */
-FlashRebaseResult flash_rebase_layout(FlashLayout *layout, int64_t offset);
+FlashRebaseResult flash_rebase(const FlashLayout *layout,
+                                uint32_t new_base,
+                                FlashRebaseOptions opts,
+                                FlashLayout *out);
+
+/** Return a human-readable string for a result code. */
+const char *flash_rebase_result_str(FlashRebaseResult result);
 
 /**
- * Rebase a layout so that its lowest-addressed region starts at new_base.
- *
- * @param layout    Pointer to the layout to rebase.
- * @param new_base  Desired start address for the lowest region.
- * @return          REBASE_OK on success, or an error code.
+ * Free a layout produced by flash_rebase().
+ * @param free_names If true, also free each region's name string.
  */
-FlashRebaseResult flash_rebase_layout_to(FlashLayout *layout, uint32_t new_base);
-
-/**
- * Return the minimum start address across all regions in the layout.
- *
- * @param layout  Pointer to the layout.
- * @param out     Output parameter receiving the minimum address.
- * @return        REBASE_OK on success, REBASE_ERR_NULL if layout is empty.
- */
-FlashRebaseResult flash_rebase_min_address(const FlashLayout *layout, uint32_t *out);
-
-#ifdef __cplusplus
-}
-#endif
+void flash_rebase_layout_free(FlashLayout *layout, bool free_names);
 
 #endif /* FLASHREBASE_H */
