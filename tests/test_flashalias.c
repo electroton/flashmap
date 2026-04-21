@@ -1,121 +1,114 @@
+/*
+ * test_flashalias.c - Unit tests for flashalias module
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include "../src/flashalias.h"
 
-static int tests_run = 0;
-static int tests_passed = 0;
-
-#define TEST(name) do { tests_run++; printf("  [TEST] %s\n", name); } while (0)
-#define PASS()     do { tests_passed++; } while (0)
-#define FAIL(msg)  do { printf("  [FAIL] %s\n", msg); } while (0)
-
-static void test_init_free(void) {
-    TEST("init and free");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    assert(t.count == 0);
-    flashalias_free(&t);
-    PASS();
+static void test_init(void) {
+    FlashAliasMap map;
+    flashalias_init(&map);
+    assert(flashalias_count(&map) == 0);
+    printf("  [PASS] test_init\n");
 }
 
 static void test_add_and_resolve(void) {
-    TEST("add alias and resolve");
-    FlashAliasTable t;
-    flashalias_init(&t);
+    FlashAliasMap map;
+    flashalias_init(&map);
 
-    int rc = flashalias_add(&t, "FLASH_APP", "app");
-    assert(rc == 0);
-    rc = flashalias_add(&t, "FLASH_APP", "application");
-    assert(rc == 0);
+    int rc = flashalias_add(&map, "FLASH_BANK0", "fw_region");
+    assert(rc == FLASHALIAS_OK);
+    assert(flashalias_count(&map) == 1);
 
-    const char *resolved = flashalias_resolve(&t, "app");
+    const char *resolved = flashalias_resolve(&map, "fw_region");
     assert(resolved != NULL);
-    assert(strcmp(resolved, "FLASH_APP") == 0);
-
-    resolved = flashalias_resolve(&t, "application");
-    assert(resolved != NULL);
-    assert(strcmp(resolved, "FLASH_APP") == 0);
-
-    flashalias_free(&t);
-    PASS();
+    assert(strcmp(resolved, "FLASH_BANK0") == 0);
+    printf("  [PASS] test_add_and_resolve\n");
 }
 
-static void test_resolve_by_region_name(void) {
-    TEST("resolve by canonical region name");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    flashalias_add(&t, "BOOTLOADER", "boot");
+static void test_resolve_unknown_returns_self(void) {
+    FlashAliasMap map;
+    flashalias_init(&map);
 
-    /* The region name itself should resolve to itself */
-    const char *resolved = flashalias_resolve(&t, "BOOTLOADER");
+    const char *resolved = flashalias_resolve(&map, "unknown_region");
     assert(resolved != NULL);
-    assert(strcmp(resolved, "BOOTLOADER") == 0);
-
-    flashalias_free(&t);
-    PASS();
-}
-
-static void test_resolve_unknown_returns_null(void) {
-    TEST("resolve unknown alias returns NULL");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    assert(flashalias_resolve(&t, "nonexistent") == NULL);
-    flashalias_free(&t);
-    PASS();
+    assert(strcmp(resolved, "unknown_region") == 0);
+    printf("  [PASS] test_resolve_unknown_returns_self\n");
 }
 
 static void test_duplicate_alias_rejected(void) {
-    TEST("duplicate alias is rejected");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    flashalias_add(&t, "REGION_A", "ra");
-    int rc = flashalias_add(&t, "REGION_B", "ra");
-    assert(rc == -1);
-    flashalias_free(&t);
-    PASS();
+    FlashAliasMap map;
+    flashalias_init(&map);
+
+    flashalias_add(&map, "FLASH_BANK0", "fw_region");
+    int rc = flashalias_add(&map, "FLASH_BANK1", "fw_region");
+    assert(rc == FLASHALIAS_ERR_DUPLICATE);
+    assert(flashalias_count(&map) == 1);
+    printf("  [PASS] test_duplicate_alias_rejected\n");
 }
 
 static void test_remove(void) {
-    TEST("remove aliases for a region");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    flashalias_add(&t, "NVRAM", "nv");
-    flashalias_add(&t, "NVRAM", "nvram_alt");
+    FlashAliasMap map;
+    flashalias_init(&map);
 
-    int removed = flashalias_remove(&t, "NVRAM");
-    assert(removed == 1);
-    assert(flashalias_resolve(&t, "nv") == NULL);
-    assert(flashalias_resolve(&t, "nvram_alt") == NULL);
+    flashalias_add(&map, "FLASH_BANK0", "fw_region");
+    flashalias_add(&map, "FLASH_BANK1", "cfg_region");
+    assert(flashalias_count(&map) == 2);
 
-    flashalias_free(&t);
-    PASS();
+    int rc = flashalias_remove(&map, "fw_region");
+    assert(rc == FLASHALIAS_OK);
+    assert(flashalias_count(&map) == 1);
+
+    /* Resolved after removal should return the name itself */
+    const char *resolved = flashalias_resolve(&map, "fw_region");
+    assert(strcmp(resolved, "fw_region") == 0);
+    printf("  [PASS] test_remove\n");
 }
 
-static void test_list(void) {
-    TEST("list aliases for a region");
-    FlashAliasTable t;
-    flashalias_init(&t);
-    flashalias_add(&t, "OTA", "ota_slot0");
-    flashalias_add(&t, "OTA", "ota_primary");
+static void test_remove_not_found(void) {
+    FlashAliasMap map;
+    flashalias_init(&map);
 
-    char out[FLASHALIAS_MAX_ALIASES][FLASHALIAS_NAME_LEN];
-    size_t n = flashalias_list(&t, "OTA", out, FLASHALIAS_MAX_ALIASES);
-    assert(n == 2);
+    int rc = flashalias_remove(&map, "nonexistent");
+    assert(rc == FLASHALIAS_ERR_NOT_FOUND);
+    printf("  [PASS] test_remove_not_found\n");
+}
 
-    flashalias_free(&t);
-    PASS();
+static void test_null_safety(void) {
+    assert(flashalias_add(NULL, "orig", "alias") == FLASHALIAS_ERR_NULL);
+    assert(flashalias_resolve(NULL, "alias") == NULL);
+    assert(flashalias_remove(NULL, "alias") == FLASHALIAS_ERR_NULL);
+    assert(flashalias_count(NULL) == 0);
+    printf("  [PASS] test_null_safety\n");
+}
+
+static void test_multiple_aliases(void) {
+    FlashAliasMap map;
+    flashalias_init(&map);
+
+    flashalias_add(&map, "FLASH_BANK0", "boot");
+    flashalias_add(&map, "FLASH_BANK1", "app");
+    flashalias_add(&map, "FLASH_BANK2", "data");
+    assert(flashalias_count(&map) == 3);
+
+    assert(strcmp(flashalias_resolve(&map, "boot"), "FLASH_BANK0") == 0);
+    assert(strcmp(flashalias_resolve(&map, "app"),  "FLASH_BANK1") == 0);
+    assert(strcmp(flashalias_resolve(&map, "data"), "FLASH_BANK2") == 0);
+    printf("  [PASS] test_multiple_aliases\n");
 }
 
 int main(void) {
     printf("Running flashalias tests...\n");
-    test_init_free();
+    test_init();
     test_add_and_resolve();
-    test_resolve_by_region_name();
-    test_resolve_unknown_returns_null();
+    test_resolve_unknown_returns_self();
     test_duplicate_alias_rejected();
     test_remove();
-    test_list();
-    printf("Results: %d/%d passed\n", tests_passed, tests_run);
-    return (tests_passed == tests_run) ? 0 : 1;
+    test_remove_not_found();
+    test_null_safety();
+    test_multiple_aliases();
+    printf("All flashalias tests passed.\n");
+    return 0;
 }
