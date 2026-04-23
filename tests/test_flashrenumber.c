@@ -1,124 +1,117 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-
 #include "../src/flashrenumber.h"
-#include "../src/flashlayout.h"
 #include "../src/flashregion.h"
 
-/* Helper: build a small layout with N regions */
-static FlashLayout *make_layout(void) {
-    FlashLayout *l = flash_layout_create();
-    assert(l);
-
-    FlashRegion r;
-    memset(&r, 0, sizeof(r));
-
-    r.start = 0x0000; r.size = 0x1000; snprintf(r.name, sizeof(r.name), "boot");
-    flash_layout_add_region(l, &r);
-
-    r.start = 0x1000; r.size = 0x2000; snprintf(r.name, sizeof(r.name), "app");
-    flash_layout_add_region(l, &r);
-
-    r.start = 0x3000; r.size = 0x0800; snprintf(r.name, sizeof(r.name), "data");
-    flash_layout_add_region(l, &r);
-
-    return l;
+static void make_region(FlashRegion *r, const char *name,
+                        uint32_t id, uint32_t base, uint32_t size) {
+    memset(r, 0, sizeof(*r));
+    strncpy(r->name, name, sizeof(r->name) - 1);
+    r->id           = id;
+    r->base_address = base;
+    r->size         = size;
 }
 
-static void test_shift_mode(void) {
-    FlashLayout *l = make_layout();
-    FlashRenumberOptions opts = {
-        .mode      = RENUMBER_SHIFT,
-        .base      = 0x8000000,
-        .alignment = 0,
-        .dry_run   = false
-    };
-    FlashRenumberResult res;
-    int rc = flash_renumber(l, &opts, &res);
-    assert(rc == 0);
-    assert(res.regions_renumbered == 3);
-    assert(res.min_new_addr == 0x8000000);
-    assert(res.max_new_addr == 0x8000000 + 0x3000);
+static void test_basic_renumber(void) {
+    FlashRegion regions[3];
+    make_region(&regions[0], "boot",   10, 0x0000, 0x1000);
+    make_region(&regions[1], "app",    20, 0x1000, 0x8000);
+    make_region(&regions[2], "config", 30, 0x9000, 0x0400);
 
-    /* Verify first region shifted correctly */
-    const FlashRegion *boot = flash_layout_get_region(l, 0);
-    assert(boot && boot->start == 0x8000000);
+    FlashRenumberOptions opts = { .start_id = 1, .step = 1, .apply = 0 };
+    FlashRenumberResult  res  = flash_renumber(regions, 3, &opts);
 
-    const FlashRegion *app = flash_layout_get_region(l, 1);
-    assert(app && app->start == 0x8001000);
+    assert(res.status == FLASH_RENUMBER_OK);
+    assert(res.count  == 3);
+    assert(res.entries[0].new_id == 1);
+    assert(res.entries[1].new_id == 2);
+    assert(res.entries[2].new_id == 3);
 
-    flash_layout_destroy(l);
-    printf("PASS: test_shift_mode\n");
+    /* apply=0: original IDs unchanged */
+    assert(regions[0].id == 10);
+    assert(regions[1].id == 20);
+    assert(regions[2].id == 30);
+
+    flash_renumber_result_free(&res);
+    printf("PASS: test_basic_renumber\n");
 }
 
-static void test_sequential_mode(void) {
-    FlashLayout *l = make_layout();
-    FlashRenumberOptions opts = {
-        .mode      = RENUMBER_SEQUENTIAL,
-        .base      = 0x0000,
-        .alignment = 0x100,
-        .dry_run   = false
-    };
-    FlashRenumberResult res;
-    int rc = flash_renumber(l, &opts, &res);
-    assert(rc == 0);
-    assert(res.regions_renumbered == 3);
+static void test_renumber_with_step(void) {
+    FlashRegion regions[4];
+    for (int i = 0; i < 4; i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "r%d", i);
+        make_region(&regions[i], name, (uint32_t)i, (uint32_t)(i * 0x1000), 0x1000);
+    }
 
-    const FlashRegion *boot = flash_layout_get_region(l, 0);
-    assert(boot && boot->start == 0x0000);
+    FlashRenumberOptions opts = { .start_id = 100, .step = 10, .apply = 1 };
+    FlashRenumberResult  res  = flash_renumber(regions, 4, &opts);
 
-    const FlashRegion *app = flash_layout_get_region(l, 1);
-    assert(app && app->start == 0x1000); /* 0x0000 + 0x1000 aligned to 0x100 */
+    assert(res.status == FLASH_RENUMBER_OK);
+    assert(res.entries[0].new_id == 100);
+    assert(res.entries[1].new_id == 110);
+    assert(res.entries[2].new_id == 120);
+    assert(res.entries[3].new_id == 130);
 
-    const FlashRegion *data = flash_layout_get_region(l, 2);
-    assert(data && data->start == 0x3000); /* 0x1000 + 0x2000 */
+    /* apply=1: IDs written back */
+    assert(regions[0].id == 100);
+    assert(regions[3].id == 130);
 
-    flash_layout_destroy(l);
-    printf("PASS: test_sequential_mode\n");
+    flash_renumber_result_free(&res);
+    printf("PASS: test_renumber_with_step\n");
 }
 
-static void test_dry_run_no_modify(void) {
-    FlashLayout *l = make_layout();
-    FlashRenumberOptions opts = {
-        .mode      = RENUMBER_SHIFT,
-        .base      = 0x4000,
-        .alignment = 0,
-        .dry_run   = true
-    };
-    FlashRenumberResult res;
-    int rc = flash_renumber(l, &opts, &res);
-    assert(rc == 0);
-    assert(res.regions_renumbered == 3);
+static void test_renumber_by_address(void) {
+    FlashRegion regions[3];
+    /* Intentionally out of address order */
+    make_region(&regions[0], "config", 1, 0x9000, 0x0400);
+    make_region(&regions[1], "boot",   2, 0x0000, 0x1000);
+    make_region(&regions[2], "app",    3, 0x1000, 0x8000);
 
-    /* Original addresses must be unchanged */
-    const FlashRegion *boot = flash_layout_get_region(l, 0);
-    assert(boot && boot->start == 0x0000);
+    FlashRenumberOptions opts = { .start_id = 0, .step = 1, .apply = 0 };
+    FlashRenumberResult  res  = flash_renumber_by_address(regions, 3, &opts);
 
-    flash_layout_destroy(l);
-    printf("PASS: test_dry_run_no_modify\n");
+    assert(res.status == FLASH_RENUMBER_OK);
+    assert(res.count  == 3);
+
+    /* Entries should be in ascending address order */
+    assert(res.entries[0].region->base_address == 0x0000);
+    assert(res.entries[1].region->base_address == 0x1000);
+    assert(res.entries[2].region->base_address == 0x9000);
+
+    assert(res.entries[0].new_id == 0);
+    assert(res.entries[1].new_id == 1);
+    assert(res.entries[2].new_id == 2);
+
+    flash_renumber_result_free(&res);
+    printf("PASS: test_renumber_by_address\n");
 }
 
-static void test_null_result_allowed(void) {
-    FlashLayout *l = make_layout();
-    FlashRenumberOptions opts = {
-        .mode      = RENUMBER_SHIFT,
-        .base      = 0x100,
-        .alignment = 0,
-        .dry_run   = false
-    };
-    int rc = flash_renumber(l, &opts, NULL);
-    assert(rc == 0);
-    flash_layout_destroy(l);
-    printf("PASS: test_null_result_allowed\n");
+static void test_invalid_args(void) {
+    FlashRenumberOptions opts = { .start_id = 1, .step = 1, .apply = 0 };
+
+    FlashRenumberResult r1 = flash_renumber(NULL, 3, &opts);
+    assert(r1.status == FLASH_RENUMBER_ERR_INVALID);
+
+    FlashRegion regions[2];
+    make_region(&regions[0], "a", 0, 0x0000, 0x1000);
+    make_region(&regions[1], "b", 1, 0x1000, 0x1000);
+
+    FlashRenumberResult r2 = flash_renumber(regions, 0, &opts);
+    assert(r2.status == FLASH_RENUMBER_ERR_INVALID);
+
+    FlashRenumberResult r3 = flash_renumber(regions, 2, NULL);
+    assert(r3.status == FLASH_RENUMBER_ERR_INVALID);
+
+    printf("PASS: test_invalid_args\n");
 }
 
 int main(void) {
-    test_shift_mode();
-    test_sequential_mode();
-    test_dry_run_no_modify();
-    test_null_result_allowed();
+    test_basic_renumber();
+    test_renumber_with_step();
+    test_renumber_by_address();
+    test_invalid_args();
     printf("All flashrenumber tests passed.\n");
     return 0;
 }

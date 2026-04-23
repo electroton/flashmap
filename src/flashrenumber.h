@@ -1,61 +1,57 @@
-/**
- * flashrenumber.h - Renumber flash region addresses by applying a base offset
- * or remapping to a new sequential layout.
- */
-
 #ifndef FLASHRENUMBER_H
 #define FLASHRENUMBER_H
 
-#include "flashregion.h"
-#include "flashlayout.h"
 #include <stdint.h>
-#include <stdbool.h>
+#include <stddef.h>
+#include "flashregion.h"
 
-/**
- * Renumber mode controlling how addresses are reassigned.
- */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
-    RENUMBER_SHIFT,      /* Shift all addresses by a fixed delta */
-    RENUMBER_SEQUENTIAL  /* Pack regions sequentially from a base address */
-} FlashRenumberMode;
+    FLASH_RENUMBER_OK          = 0,
+    FLASH_RENUMBER_ERR_INVALID = 1,
+    FLASH_RENUMBER_ERR_ALLOC   = 2
+} FlashRenumberStatus;
 
-/**
- * Options for the renumber operation.
- */
 typedef struct {
-    FlashRenumberMode mode;
-    uint32_t          base;       /* Base address (SHIFT: added delta, SEQUENTIAL: start addr) */
-    uint32_t          alignment;  /* Minimum alignment for sequential packing (0 = none) */
-    bool              dry_run;    /* If true, compute result without modifying layout */
+    uint32_t     start_id; /* First ID to assign               */
+    uint32_t     step;     /* Increment between IDs (min 1)    */
+    int          apply;    /* Non-zero: write IDs back to regions */
 } FlashRenumberOptions;
 
-/**
- * Result of a renumber operation.
- */
 typedef struct {
-    int      regions_renumbered;
-    uint32_t min_old_addr;
-    uint32_t max_old_addr;
-    uint32_t min_new_addr;
-    uint32_t max_new_addr;
-    bool     had_overlap;  /* True if sequential packing detected overlap in original */
+    FlashRegion *region;  /* Pointer to the affected region */
+    uint32_t     old_id;
+    uint32_t     new_id;
+} FlashRenumberEntry;
+
+typedef struct {
+    FlashRenumberEntry *entries;
+    size_t              count;
+    FlashRenumberStatus status;
 } FlashRenumberResult;
 
 /**
- * Apply renumbering to all regions in a layout.
- *
- * @param layout   Layout to modify (or inspect if dry_run is set).
- * @param opts     Renumber options.
- * @param result   Output result summary (may be NULL).
- * @return 0 on success, -1 on error.
+ * Renumber regions sequentially in their current array order.
  */
-int flash_renumber(FlashLayout *layout,
-                   const FlashRenumberOptions *opts,
-                   FlashRenumberResult *result);
+FlashRenumberResult flash_renumber(FlashRegion *regions, size_t count,
+                                    const FlashRenumberOptions *opts);
 
 /**
- * Print a human-readable summary of a renumber result.
+ * Renumber regions sorted ascending by base_address.
  */
-void flash_renumber_print_result(const FlashRenumberResult *result);
+FlashRenumberResult flash_renumber_by_address(FlashRegion *regions, size_t count,
+                                               const FlashRenumberOptions *opts);
+
+/**
+ * Free resources held by a FlashRenumberResult.
+ */
+void flash_renumber_result_free(FlashRenumberResult *result);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FLASHRENUMBER_H */
