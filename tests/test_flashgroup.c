@@ -1,93 +1,111 @@
-#include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include "../src/flashgroup.h"
-#include "../src/flashregion.h"
+#include "../src/flashgroup_report.h"
 
-static FlashRegion make_region(const char *name, const char *tag,
-                               uint32_t start, uint32_t size, uint32_t used) {
+static FlashRegion make_region(const char *name, uint32_t start, uint32_t size) {
     FlashRegion r;
     memset(&r, 0, sizeof(r));
     strncpy(r.name, name, sizeof(r.name) - 1);
-    strncpy(r.tag,  tag,  sizeof(r.tag)  - 1);
     r.start = start;
     r.size  = size;
-    r.used  = used;
     return r;
 }
 
-static void test_groupset_init(void) {
-    FlashGroupSet gs;
-    flash_groupset_init(&gs);
-    assert(gs.count == 0);
-    printf("  [PASS] groupset_init\n");
-}
-
-static void test_group_by_tag(void) {
-    FlashRegion regions[] = {
-        make_region("bootloader", "boot",  0x0000, 0x4000, 0x3800),
-        make_region("app_code",   "app",   0x4000, 0x8000, 0x6000),
-        make_region("app_data",   "app",   0xC000, 0x2000, 0x1000),
-        make_region("nvs",        "config",0xE000, 0x1000, 0x0200),
-    };
-    size_t n = sizeof(regions) / sizeof(regions[0]);
-
-    FlashGroupSet gs;
-    flash_groupset_init(&gs);
-    int rc = flash_group_regions(&gs, regions, n, FLASH_GROUP_BY_TAG);
-    assert(rc == 0);
-    assert(gs.count == 3); /* boot, app, config */
-
-    FlashGroup *app = flash_group_find(&gs, "app");
-    assert(app != NULL);
-    assert(app->count == 2);
-    assert(app->total_size == 0x8000 + 0x2000);
-    assert(app->total_used == 0x6000 + 0x1000);
-
-    FlashGroup *boot = flash_group_find(&gs, "boot");
-    assert(boot != NULL);
-    assert(boot->count == 1);
-
-    printf("  [PASS] group_by_tag\n");
-}
-
-static void test_group_find_missing(void) {
-    FlashGroupSet gs;
-    flash_groupset_init(&gs);
-    FlashGroup *g = flash_group_find(&gs, "nonexistent");
-    assert(g == NULL);
-    printf("  [PASS] group_find_missing\n");
-}
-
-static void test_group_by_tag_single(void) {
-    FlashRegion regions[] = {
-        make_region("only", "sole", 0x0000, 0x1000, 0x0800),
-    };
-    FlashGroupSet gs;
-    flash_groupset_init(&gs);
-    assert(flash_group_regions(&gs, regions, 1, FLASH_GROUP_BY_TAG) == 0);
-    assert(gs.count == 1);
-    FlashGroup *g = flash_group_find(&gs, "sole");
+static void test_create_destroy(void) {
+    FlashGroup *g = flashgroup_create("test_group");
     assert(g != NULL);
-    assert(g->total_size == 0x1000);
-    printf("  [PASS] group_by_tag_single\n");
+    assert(strcmp(g->name, "test_group") == 0);
+    assert(g->count == 0);
+    flashgroup_destroy(g);
+    printf("PASS test_create_destroy\n");
 }
 
-static void test_group_empty_input(void) {
-    FlashGroupSet gs;
-    flash_groupset_init(&gs);
-    assert(flash_group_regions(&gs, NULL, 0, FLASH_GROUP_BY_TAG) == 0);
-    assert(gs.count == 0);
-    printf("  [PASS] group_empty_input\n");
+static void test_add_and_count(void) {
+    FlashRegion r1 = make_region("bootloader", 0x00000000, 0x4000);
+    FlashRegion r2 = make_region("application", 0x00004000, 0x1C000);
+
+    FlashGroup *g = flashgroup_create("firmware");
+    assert(flashgroup_add(g, &r1) == 0);
+    assert(flashgroup_add(g, &r2) == 0);
+    assert(g->count == 2);
+    flashgroup_destroy(g);
+    printf("PASS test_add_and_count\n");
+}
+
+static void test_total_size(void) {
+    FlashRegion r1 = make_region("a", 0x0000, 0x1000);
+    FlashRegion r2 = make_region("b", 0x1000, 0x2000);
+    FlashRegion r3 = make_region("c", 0x3000, 0x0800);
+
+    FlashGroup *g = flashgroup_create("sized");
+    flashgroup_add(g, &r1);
+    flashgroup_add(g, &r2);
+    flashgroup_add(g, &r3);
+    assert(flashgroup_total_size(g) == 0x3800);
+    flashgroup_destroy(g);
+    printf("PASS test_total_size\n");
+}
+
+static void test_find(void) {
+    FlashRegion r1 = make_region("alpha", 0x0000, 0x100);
+    FlashRegion r2 = make_region("beta",  0x0100, 0x200);
+
+    FlashGroup *g = flashgroup_create("lookup");
+    flashgroup_add(g, &r1);
+    flashgroup_add(g, &r2);
+
+    FlashRegion *found = flashgroup_find(g, "beta");
+    assert(found != NULL);
+    assert(found->start == 0x0100);
+
+    assert(flashgroup_find(g, "gamma") == NULL);
+    flashgroup_destroy(g);
+    printf("PASS test_find\n");
+}
+
+static void test_remove(void) {
+    FlashRegion r1 = make_region("x", 0x0000, 0x400);
+    FlashRegion r2 = make_region("y", 0x0400, 0x400);
+    FlashRegion r3 = make_region("z", 0x0800, 0x400);
+
+    FlashGroup *g = flashgroup_create("removable");
+    flashgroup_add(g, &r1);
+    flashgroup_add(g, &r2);
+    flashgroup_add(g, &r3);
+
+    assert(flashgroup_remove(g, "y") == 0);
+    assert(g->count == 2);
+    assert(flashgroup_find(g, "y") == NULL);
+    assert(flashgroup_remove(g, "missing") == -1);
+    flashgroup_destroy(g);
+    printf("PASS test_remove\n");
+}
+
+static void test_report(void) {
+    FlashRegion r1 = make_region("boot", 0x00000000, 0x8000);
+    FlashRegion r2 = make_region("app",  0x00008000, 0x18000);
+
+    FlashGroup *g = flashgroup_create("full_flash");
+    flashgroup_add(g, &r1);
+    flashgroup_add(g, &r2);
+
+    flashgroup_report_summary(g, stdout);
+    flashgroup_report_detail(g, stdout);
+
+    flashgroup_destroy(g);
+    printf("PASS test_report\n");
 }
 
 int main(void) {
-    printf("Running flashgroup tests...\n");
-    test_groupset_init();
-    test_group_by_tag();
-    test_group_find_missing();
-    test_group_by_tag_single();
-    test_group_empty_input();
+    test_create_destroy();
+    test_add_and_count();
+    test_total_size();
+    test_find();
+    test_remove();
+    test_report();
     printf("All flashgroup tests passed.\n");
     return 0;
 }
